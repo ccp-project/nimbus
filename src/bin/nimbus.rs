@@ -39,7 +39,7 @@ fn make_args() -> Result<(ccp_nimbus::NimbusConfig, String), String> {
              .help(""))
         .arg(Arg::with_name("xtcpFlows")
              .long("xtcpFlows")
-             .default_value("2")
+             .default_value("1")
              .help(""))
         .arg(Arg::with_name("initDelayThreshold")
              .long("initDelayThreshold")
@@ -67,7 +67,7 @@ fn make_args() -> Result<(ccp_nimbus::NimbusConfig, String), String> {
              .help(""))
         .arg(Arg::with_name("lossMode")
              .long("lossMode")
-             .default_value("MulTCP")
+             .default_value("Cubic")
             .help(""))
         .arg(Arg::with_name("uest")
              .long("uest")
@@ -97,7 +97,7 @@ fn make_args() -> Result<(ccp_nimbus::NimbusConfig, String), String> {
             switchingThreshArg: pry_arg!(matches, "switchingThresh", f64),
             flowModeArg: matches.value_of("flowMode").unwrap().to_string(),
             delayModeArg: matches.value_of("delayMode").unwrap().to_string(),
-            lossModeArg: matches.value_of("delayMode").unwrap().to_string(),
+            lossModeArg: matches.value_of("lossMode").unwrap().to_string(),
             uestArg: pry_arg!(matches, "uest", f64) * 125000f64,
             useEWMAArg: pry_arg!(matches, "useEWMA"),
             setWinCapArg: pry_arg!(matches, "setWinCap"),
