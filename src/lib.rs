@@ -141,60 +141,54 @@ impl<T: Ipc> Nimbus<T> {
         if (time::get_time()-self.startTime).num_seconds() < 1 {
             rate = 2_000_000.0;
         }
-        let mut win = rate;
-        win = 15000f64.max(rate * 2.0 * (self.rtt.num_milliseconds() as f64) * 0.001);
-        //match self.control_channel.send_pattern(
-        //    self.sock_id,
-        //    make_pattern!(
-        //		pattern::Event::SetRateAbs(rate as u32) =>
-        //		pattern::Event::SetCwndAbs(win as u32) =>
-        //		pattern::Event::WaitNs(waitTime.num_nanoseconds().unwrap() as u32) =>
-        //		pattern::Event::Report
-        //    ),
-        //) {
-        //    Ok(_) => (),
-        //    Err(e) => {
-        //        self.logger.as_ref().map(|log| {
-        //            warn!(log, "send_pattern"; "err" => ?e);
-        //        });
-        //    }
-        //}
+        let mut win = 15000f64.max(rate * 2.0 * (self.rtt.num_milliseconds() as f64) * 0.001);
+
         self.control_channel.update_field(&self.sc, &[("Rate", rate as u32), ("Cwnd", win as u32)]);
     }
 
     fn install(&self, waitTime: time::Duration) -> Scope {
         self.control_channel.install(
-            format!("
-                (def (Report.acked 0) (Report.rtt 0) (Report.rin 0) (Report.rout 0) (Report.loss 0) (Report.timeout false))
+            b"
+                (def 
+                    (Report
+                        (volatile acked 0)
+                        (volatile rtt 0)
+                        (volatile loss 0)
+                        (volatile rin 0)
+                        (volatile rout 0)
+                        (volatile timeout false)
+                    )
+                    (reportTime 0)
+                )
                 (when true
-                    (bind Report.acked (+ Report.acked Ack.bytes_acked))
-                    (bind Report.rtt Flow.rtt_sample_us)
-                    (bind Report.rin Flow.rate_outgoing)
-                    (bind Report.rout Flow.rate_incoming)
-                    (bind Report.loss Ack.lost_pkts_sample)
-                    (bind Report.timeout Flow.was_timeout)
+                    (:= Report.acked (+ Report.acked Ack.bytes_acked))
+                    (:= Report.rtt Flow.rtt_sample_us)
+                    (:= Report.rin Flow.rate_outgoing)
+                    (:= Report.rout Flow.rate_incoming)
+                    (:= Report.loss Ack.lost_pkts_sample)
+                    (:= Report.timeout Flow.was_timeout)
                     (fallthrough)
                 )
                 (when (|| Report.timeout (> Report.loss 0))
-                    (report) 
-                    (reset)
-                )
-                (when (> Micros {})
                     (report)
-                    (reset)
+                    (:= Micros 0)
                 )
-            ", waitTime.num_microseconds().unwrap()).as_bytes()
+                (when (> Micros reportTime)
+                    (report)
+                    (:= Micros 0)
+                )
+            ", Some(&[("reportTime", waitTime.num_microseconds().unwrap() as u32)][..])
         ).unwrap()
     }
 
     fn get_fields(&mut self, m: &Report) -> Option<(u32, u32, f64, f64, u32, bool)> {
         let sc = &self.sc;
-        let acked = m.get_field(&String::from("Report.acked"), sc).map(|x| x as u32)?;
-        let rtt = m.get_field(&String::from("Report.rtt"), sc).map(|x| x as u32)?;
-        let rin = m.get_field(&String::from("Report.rin"), sc).map(|x| x as f64)?;
-        let rout = m.get_field(&String::from("Report.rout"), sc).map(|x| x as f64)?;
-        let loss = m.get_field(&String::from("Report.loss"), sc).map(|x| x as u32)?;
-        let was_timeout = (m.get_field(&String::from("Report.timeout"), sc).map(|x| x as u32)?)==1;
+        let acked = m.get_field(&String::from("Report.acked"), sc).expect("expected acked field in returned measurement") as u32;
+        let rtt = m.get_field(&String::from("Report.rtt"), sc).expect("expected rtt field in returned measurement") as u32;
+        let rin = m.get_field(&String::from("Report.rin"), sc).expect("expected rin field in returned measurement") as f64;
+        let rout = m.get_field(&String::from("Report.rout"), sc).expect("expected rout field in returned measurement") as f64;
+        let loss = m.get_field(&String::from("Report.loss"), sc).expect("expected loss field in returned measurement") as u32;
+        let was_timeout = (m.get_field(&String::from("Report.timeout"), sc).expect("expected timeout field in returned measurement") as u32)==1;
         Some((acked, rtt, rin, rout, loss, was_timeout))
     }
 
