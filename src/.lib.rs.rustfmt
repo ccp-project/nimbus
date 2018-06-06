@@ -1,0 +1,136 @@
+#[macro_use]
+extern crate slog;
+extern crate time;
+#[macro_use]
+extern crate portus;
+
+use portus::{CongAlg, Config, Datapath, DatapathInfo, Measurement};
+use portus::pattern;
+use portus::ipc::Ipc;
+use portus::lang::Scope;
+
+pub struct Nimbus<T: Ipc> {
+    control_channel: Datapath<T>,
+    logger: Option<slog::Logger>,
+    sc: Option<Scope>,
+    sock_id: u32,
+    mss: u32,
+}
+
+#[derive(Clone)]
+pub struct NimbusConfig {
+    pub probe_rtt_interval: time::Duration,
+    // TODO make more things configurable
+}
+
+impl Default for NimbusConfig {
+    fn default() -> Self {
+        NimbusConfig { }
+    }
+}
+
+impl<T: Ipc> Nimbus<T> {
+    fn send_pattern(&self) {
+        match self.control_channel.send_pattern(
+            self.sock_id,
+            make_pattern!(
+                // TODO
+            ),
+        ) {
+            Ok(_) => (),
+            Err(e) => {
+                self.logger.as_ref().map(|log| {
+                    warn!(log, "send_pattern"; "err" => ?e);
+                });
+            }
+        }
+    }
+
+    fn install_fold(&self) -> Option<Scope> {
+        match self.control_channel.install_measurement(
+            self.sock_id,
+            b"
+                // TODO
+            "
+        ) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                self.logger.as_ref().map(|log| {
+                    warn!(log, "install_fold"; "err" => ?e);
+                });
+                None
+            }
+        }
+    }
+
+    fn get_fields(&mut self, m: &Measurement) -> Option<(u32, u32, f64)> {
+        let sc = self.sc.as_ref().expect("scope should be initialized");
+        // TODO
+        // Need to change return statement / return type in function signature 
+        // example: if you have just one field, rtt, change return type to Option<(u32)> then
+        // let rtt = m.get_field(&String::from("Flow.minrtt"), sc).map(|x| x as u32)?;
+        // 
+        // Some((rtt))
+    }
+
+}
+
+impl<T: Ipc> CongAlg<T> for Nimbus<T> {
+    type Config = NimbusConfig;
+
+    fn name() -> String {
+        String::from("nimbus")
+    }
+
+    fn create(control: Datapath<T>, cfg: Config<T, Nimbus<T>>, info: DatapathInfo) -> Self {
+        let mut s = Self {
+            sock_id: info.sock_id,
+            control_channel: control,
+            sc: None,
+            logger: cfg.logger,
+            mss: info.mss,
+        };
+
+        s.sc = s.install_fold();
+        match s.control_channel.send_pattern(
+            s.sock_id,
+            make_pattern!(
+                // TODO (initial send pattern)
+            ),
+        ) {
+            Ok(_) => (),
+            Err(e) => {
+                s.logger.as_ref().map(|log| {
+                    warn!(log, "send_pattern"; "err" => ?e);
+                });
+            }
+        }
+
+        s
+    }
+
+    fn measurement(&mut self, _sock_id: u32, m: Measurement) {
+                let fields = self.get_fields(&m);
+                if fields.is_none() {
+                    // TODO handle error?
+                    return;
+                }
+
+                // e.g.
+                let (minrtt) = fields.unwrap();
+
+                // if you want to install a new fold pattern...
+                self.sc = self.install_fold();
+                // if you want to install a new send pattern
+                self.send_pattern();
+
+                // if you want to log some stuff
+                self.logger.as_ref().map(|log| {
+                    debug!(log, "probe_bw"; 
+                        "min_rtt (us)" => self.min_rtt_us,
+                    );
+                });
+            }
+        }
+    }
+}
