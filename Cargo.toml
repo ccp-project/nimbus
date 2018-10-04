@@ -1,12 +1,12 @@
 [package]
 name = "ccp_nimbus"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Prateesh Goyal <prateesh@mit.edu>"]
 
 [dependencies]
 clap="2.29"
-num-complex="0.1"
-portus = { git = "https://github.com/ccp-project/portus" }
+num-complex="0.2"
+portus = "0.3.3"
 rand="0.4"
 rustfft="1.0.1"
 slog = "2"

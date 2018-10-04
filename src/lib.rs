@@ -141,14 +141,39 @@ impl<T: Ipc> Nimbus<T> {
         if (time::get_time()-self.startTime).num_seconds() < 1 {
             rate = 2_000_000.0;
         }
-        let mut win = 15000f64.max(rate * 2.0 * (self.rtt.num_milliseconds() as f64) * 0.001);
-
+        let win = 15000f64.max(rate * 2.0 * (self.rtt.num_milliseconds() as f64) * 0.001);
         self.control_channel.update_field(&self.sc, &[("Rate", rate as u32), ("Cwnd", win as u32)]);
     }
 
-    fn install(&self, waitTime: time::Duration) -> Scope {
-        self.control_channel.install(
-            b"
+    fn install(&mut self, waitTime: time::Duration) -> Scope {
+        self.control_channel.set_program(
+            String::from("NimbusProgram"), Some(&[("reportTime", waitTime.num_microseconds().unwrap() as u32)][..])
+        ).unwrap()
+    }
+
+    fn get_fields(&mut self, m: &Report) -> Option<(u32, u32, f64, f64, u32, bool)> {
+        let sc = &self.sc;
+        let acked = m.get_field(&String::from("Report.acked"), sc).expect("expected acked field in returned measurement") as u32;
+        let rtt = m.get_field(&String::from("Report.rtt"), sc).expect("expected rtt field in returned measurement") as u32;
+        let rin = m.get_field(&String::from("Report.rin"), sc).expect("expected rin field in returned measurement") as f64;
+        let rout = m.get_field(&String::from("Report.rout"), sc).expect("expected rout field in returned measurement") as f64;
+        let loss = m.get_field(&String::from("Report.loss"), sc).expect("expected loss field in returned measurement") as u32;
+        let was_timeout = (m.get_field(&String::from("Report.timeout"), sc).expect("expected timeout field in returned measurement") as u32)==1;
+        Some((acked, rtt, rin, rout, loss, was_timeout))
+    }
+
+}
+
+impl<T: Ipc> CongAlg<T> for Nimbus<T> {
+    type Config = NimbusConfig;
+
+    fn name() -> String {
+        String::from("nimbus")
+    }
+
+    fn init_programs(_cfg: Config<T, Self>) -> Vec<(String, String)> {
+        vec![
+            (String::from("NimbusProgram"), String::from("
                 (def 
                     (Report
                         (volatile acked 0)
@@ -177,28 +202,8 @@ impl<T: Ipc> Nimbus<T> {
                     (report)
                     (:= Micros 0)
                 )
-            ", Some(&[("reportTime", waitTime.num_microseconds().unwrap() as u32)][..])
-        ).unwrap()
-    }
-
-    fn get_fields(&mut self, m: &Report) -> Option<(u32, u32, f64, f64, u32, bool)> {
-        let sc = &self.sc;
-        let acked = m.get_field(&String::from("Report.acked"), sc).expect("expected acked field in returned measurement") as u32;
-        let rtt = m.get_field(&String::from("Report.rtt"), sc).expect("expected rtt field in returned measurement") as u32;
-        let rin = m.get_field(&String::from("Report.rin"), sc).expect("expected rin field in returned measurement") as f64;
-        let rout = m.get_field(&String::from("Report.rout"), sc).expect("expected rout field in returned measurement") as f64;
-        let loss = m.get_field(&String::from("Report.loss"), sc).expect("expected loss field in returned measurement") as u32;
-        let was_timeout = (m.get_field(&String::from("Report.timeout"), sc).expect("expected timeout field in returned measurement") as u32)==1;
-        Some((acked, rtt, rin, rout, loss, was_timeout))
-    }
-
-}
-
-impl<T: Ipc> CongAlg<T> for Nimbus<T> {
-    type Config = NimbusConfig;
-
-    fn name() -> String {
-        String::from("nimbus")
+            ")),
+        ]
     }
 
     fn create(control: Datapath<T>, cfg: Config<T, Nimbus<T>>, info: DatapathInfo) -> Self {
@@ -305,8 +310,9 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
         }
 
         //s.cubic_reset(); Careful
-        s.sc = s.install(s.waitTime);
-        s.send_pattern(s.rate, s.waitTime);
+        let wt = s.waitTime;
+        s.sc = s.install(wt);
+        s.send_pattern(s.rate, wt);
 
         s
     }
@@ -585,7 +591,7 @@ impl<T: Ipc> Nimbus<T> {
                 self.cubicCwnd += no_of_acks;
                 no_of_acks = 0.0;
             } else {
-                no_of_acks -= (self.cubicSsthresh - self.cubicCwnd);
+                no_of_acks -= self.cubicSsthresh - self.cubicCwnd;
                 self.cubicCwnd = self.cubicSsthresh;
             }
         }
@@ -834,7 +840,7 @@ impl<T: Ipc> Nimbus<T> {
             let (other_peak_zt, _) = self.findPeak(expected_peak+1.5, 2.0*expected_peak-0.5, &freq[..], &fft_zt[..]);
             let (other_peak_zout, _) = self.findPeak(expected_peak+1.5, 2.0*expected_peak-0.5, &freq[..], &fft_zout[..]);
             let mut elasticity2 = fft_zt[exp_peak_zt].norm() / fft_zt[other_peak_zt].norm();
-            let mut elasticity = (fft_zt[exp_peak_zt].norm() - mean_zt) / fft_zout[exp_peak_zout].norm();
+            let elasticity = (fft_zt[exp_peak_zt].norm() - mean_zt) / fft_zout[exp_peak_zout].norm();
             if fft_zt[exp_peak_zt].norm() < 0.25 * fft_zout[exp_peak_zout].norm() {
                 elasticity2 = elasticity2.min(3.0);
                 elasticity2 *= ((fft_zt[exp_peak_zt].norm()/fft_zout[exp_peak_zout].norm()) / 0.25).min(1.0);
