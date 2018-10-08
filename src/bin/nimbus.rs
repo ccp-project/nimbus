@@ -17,7 +17,7 @@ macro_rules! pry_arg {
 
 fn make_args() -> Result<(ccp_nimbus::NimbusConfig, String), String> {
     let matches = clap::App::new("CCP NIMBUS")
-        .version("0.1.0")
+        .version("0.2.1")
         .author("Prateesh Goyal <prateesh@mit.edu>")
         .about("Implementation of NIMBUS Congestion Control")
         .arg(Arg::with_name("ipc")
@@ -25,82 +25,80 @@ fn make_args() -> Result<(ccp_nimbus::NimbusConfig, String), String> {
              .help("Sets the type of ipc to use: (netlink|unix)")
              .default_value("unix")
              .validator(portus::algs::ipc_valid))
-        .arg(Arg::with_name("useSwitching")
-             .long("useSwitching")
+        .arg(Arg::with_name("use_switching")
+             .long("use_switching")
              .default_value("false")
              .help(""))
-        .arg(Arg::with_name("bwEstMode")
-             .long("bwEstMode")
+        .arg(Arg::with_name("bw_est_mode")
+             .long("bw_est_mode")
              .default_value("true")
              .help(""))
-        .arg(Arg::with_name("delayThreshold")
-             .long("delayThreshold")
+        .arg(Arg::with_name("delay_threshold")
+             .long("delay_threshold")
              .default_value("1.25")
              .help(""))
-        .arg(Arg::with_name("xtcpFlows")
-             .long("xtcpFlows")
+        .arg(Arg::with_name("xtcp_flows")
+             .long("xtcp_flows")
              .default_value("1")
              .help(""))
-        .arg(Arg::with_name("initDelayThreshold")
-             .long("initDelayThreshold")
+        .arg(Arg::with_name("init_delay_threshold")
+             .long("init_delay_threshold")
              .default_value("1.25")
              .help(""))
         .arg(Arg::with_name("frequency")
              .long("frequency")
              .default_value("5.0")
              .help(""))
-        .arg(Arg::with_name("pulseSize")
-             .long("pulseSize")
+        .arg(Arg::with_name("pulse_size")
+             .long("pulse_size")
              .default_value("0.25")
              .help(""))
-        .arg(Arg::with_name("switchingThresh")
-             .long("switchingThresh")
+        .arg(Arg::with_name("switching_thresh")
+             .long("switching_thresh")
              .default_value("0.4")
              .help(""))
-        .arg(Arg::with_name("flowMode")
-             .long("flowMode")
+        .arg(Arg::with_name("flow_mode")
+             .long("flow_mode")
              .default_value("XTCP")
              .help(""))
-        .arg(Arg::with_name("delayMode")
-             .long("delayMode")
+        .arg(Arg::with_name("delay_mode")
+             .long("delay_mode")
              .default_value("Nimbus")
              .help(""))
-        .arg(Arg::with_name("lossMode")
-             .long("lossMode")
+        .arg(Arg::with_name("loss_mode")
+             .long("loss_mode")
              .default_value("Cubic")
             .help(""))
         .arg(Arg::with_name("uest")
              .long("uest")
              .default_value("96.0")
              .help(""))
-        .arg(Arg::with_name("useEWMA")
-             .long("useEWMA")
+        .arg(Arg::with_name("use_ewma")
+             .long("use_ewma")
              .default_value("false")
              .help(""))
-        .arg(Arg::with_name("setWinCap")
-             .long("setWinCap")
+        .arg(Arg::with_name("set_win_cap")
+             .long("set_win_cap")
              .default_value("false")
              .help(""))
         .get_matches();
 
-
-
     Ok((
         ccp_nimbus::NimbusConfig {
-            useSwitchingArg: pry_arg!(matches, "useSwitching", bool),
-            bwEstModeArg: pry_arg!(matches, "bwEstMode", bool),
-            delayThresholdArg: pry_arg!(matches, "delayThreshold", f64),
-            xtcpFlowsArg: pry_arg!(matches, "xtcpFlows", i32),
-            initDelayThresholdArg: pry_arg!(matches, "initDelayThreshold", f64),
-            frequencyArg: pry_arg!(matches, "frequency", f64),
-            pulseSizeArg: pry_arg!(matches, "pulseSize", f64),
-            switchingThreshArg: pry_arg!(matches, "switchingThresh", f64),
-            flowModeArg: matches.value_of("flowMode").unwrap().to_string(),
-            delayModeArg: matches.value_of("delayMode").unwrap().to_string(),
-            lossModeArg: matches.value_of("lossMode").unwrap().to_string(),
-            uestArg: pry_arg!(matches, "uest", f64) * 125000f64,
-            useEWMAArg: pry_arg!(matches, "useEWMA"),
-            setWinCapArg: pry_arg!(matches, "setWinCap"),
+            use_switching_arg: pry_arg!(matches, "use_switching", bool),
+            bw_est_mode_arg: pry_arg!(matches, "bw_est_mode", bool),
+            delay_threshold_arg: pry_arg!(matches, "delay_threshold", f64),
+            xtcp_flows_arg: pry_arg!(matches, "xtcp_flows", i32),
+            init_delay_threshold_arg: pry_arg!(matches, "init_delay_threshold", f64),
+            frequency_arg: pry_arg!(matches, "frequency", f64),
+            pulse_size_arg: pry_arg!(matches, "pulse_size", f64),
+            switching_thresh_arg: pry_arg!(matches, "switching_thresh", f64),
+            flow_mode_arg: matches.value_of("flow_mode").unwrap().to_string(),
+            delay_mode_arg: matches.value_of("delay_mode").unwrap().to_string(),
+            loss_mode_arg: matches.value_of("loss_mode").unwrap().to_string(),
+            uest_arg: pry_arg!(matches, "uest", f64) * 125000f64,
+            use_ewma_arg: pry_arg!(matches, "use_ewma"),
+            set_win_cap_arg: pry_arg!(matches, "set_win_cap"),
         },
         String::from(matches.value_of("ipc").unwrap()),
     ))
