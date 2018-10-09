@@ -1,3 +1,4 @@
+#[macro_use]
 extern crate clap;
 use clap::Arg;
 extern crate time;
@@ -7,13 +8,8 @@ extern crate slog;
 extern crate ccp_nimbus;
 extern crate portus;
 
-use ccp_nimbus::Nimbus;
+use ccp_nimbus::{Nimbus, FlowMode, LossMode, DelayMode};
 use portus::ipc::{BackendBuilder, Blocking};
-
-macro_rules! pry_arg {
-    ($m:expr, $s:expr) => ($m.value_of($s).unwrap().parse().unwrap());
-    ($m:expr, $s:expr, $t:ty) => ($m.value_of($s).unwrap().parse::<$t>().unwrap());
-}
 
 fn make_args() -> Result<(ccp_nimbus::NimbusConfig, String), String> {
     let matches = clap::App::new("CCP NIMBUS")
@@ -59,14 +55,20 @@ fn make_args() -> Result<(ccp_nimbus::NimbusConfig, String), String> {
              .help(""))
         .arg(Arg::with_name("flow_mode")
              .long("flow_mode")
+             .possible_values(&FlowMode::variants())
+             .case_insensitive(true)
              .default_value("XTCP")
              .help(""))
         .arg(Arg::with_name("delay_mode")
              .long("delay_mode")
+             .possible_values(&DelayMode::variants())
+             .case_insensitive(true)
              .default_value("Nimbus")
              .help(""))
         .arg(Arg::with_name("loss_mode")
              .long("loss_mode")
+             .possible_values(&LossMode::variants())
+             .case_insensitive(true)
              .default_value("Cubic")
             .help(""))
         .arg(Arg::with_name("uest")
@@ -85,20 +87,20 @@ fn make_args() -> Result<(ccp_nimbus::NimbusConfig, String), String> {
 
     Ok((
         ccp_nimbus::NimbusConfig {
-            use_switching_arg: pry_arg!(matches, "use_switching", bool),
-            bw_est_mode_arg: pry_arg!(matches, "bw_est_mode", bool),
-            delay_threshold_arg: pry_arg!(matches, "delay_threshold", f64),
-            xtcp_flows_arg: pry_arg!(matches, "xtcp_flows", i32),
-            init_delay_threshold_arg: pry_arg!(matches, "init_delay_threshold", f64),
-            frequency_arg: pry_arg!(matches, "frequency", f64),
-            pulse_size_arg: pry_arg!(matches, "pulse_size", f64),
-            switching_thresh_arg: pry_arg!(matches, "switching_thresh", f64),
-            flow_mode_arg: matches.value_of("flow_mode").unwrap().to_string(),
-            delay_mode_arg: matches.value_of("delay_mode").unwrap().to_string(),
-            loss_mode_arg: matches.value_of("loss_mode").unwrap().to_string(),
-            uest_arg: pry_arg!(matches, "uest", f64) * 125000f64,
-            use_ewma_arg: pry_arg!(matches, "use_ewma"),
-            set_win_cap_arg: pry_arg!(matches, "set_win_cap"),
+            use_switching_arg: value_t!(matches, "use_switching", bool).unwrap(),
+            bw_est_mode_arg: value_t!(matches, "bw_est_mode", bool).unwrap(),
+            delay_threshold_arg: value_t!(matches, "delay_threshold", f64).unwrap(),
+            xtcp_flows_arg: value_t!(matches, "xtcp_flows", i32).unwrap(),
+            init_delay_threshold_arg: value_t!(matches, "init_delay_threshold", f64).unwrap(),
+            frequency_arg: value_t!(matches, "frequency", f64).unwrap(),
+            pulse_size_arg: value_t!(matches, "pulse_size", f64).unwrap(),
+            switching_thresh_arg: value_t!(matches, "switching_thresh", f64).unwrap(),
+            flow_mode_arg: value_t!(matches, "flow_mode", FlowMode).unwrap(),
+            delay_mode_arg: value_t!(matches, "delay_mode", DelayMode).unwrap(),
+            loss_mode_arg: value_t!(matches, "loss_mode", LossMode).unwrap(),
+            uest_arg: value_t!(matches, "uest", f64).unwrap() * 125_000f64,
+            use_ewma_arg: value_t!(matches, "use_ewma", bool).unwrap(),
+            set_win_cap_arg: value_t!(matches, "set_win_cap", bool).unwrap(),
         },
         String::from(matches.value_of("ipc").unwrap()),
     ))
@@ -114,6 +116,7 @@ fn main() {
         "algorithm" => "NIMBUS",
         "ipc" => ipc.clone(),
     );
+
 	match ipc.as_str() {
         "unix" => {
             use portus::ipc::unix::Socket;
