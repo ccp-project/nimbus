@@ -158,7 +158,7 @@ impl Default for NimbusConfig {
             switching_thresh_arg: 0.4,
             flow_mode_arg: FlowMode::XTCP,
             delay_mode_arg: DelayMode::Nimbus,
-            loss_mode_arg: LossMode::Cubic,
+            loss_mode_arg: LossMode::MulTCP,
             uest_arg: 96.0 * 125000.0,
             use_ewma_arg: false,
             set_win_cap_arg: false ,
