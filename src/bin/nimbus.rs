@@ -69,7 +69,7 @@ fn make_args() -> Result<(ccp_nimbus::NimbusConfig, String), String> {
              .long("loss_mode")
              .possible_values(&LossMode::variants())
              .case_insensitive(true)
-             .default_value("Cubic")
+             .default_value("MulTCP")
             .help(""))
         .arg(Arg::with_name("uest")
              .long("uest")
