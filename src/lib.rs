@@ -342,28 +342,29 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
 
 
     fn on_report(&mut self, _sock_id: u32, m: Report) {
-        let (acked, rtt, mut rin, mut rout, loss, was_timeout) =  self.get_fields(&m).unwrap();
+        let (acked, rtt_us, mut rin, mut rout, loss, was_timeout) =  self.get_fields(&m).unwrap();
 
-        self.rtt = time::Duration::microseconds(rtt as i64);
+        self.rtt = time::Duration::microseconds(rtt_us as i64);
 
-        if loss>0 {
+        if loss > 0 {
             self.handle_drop();
             return;
         }
+
         if was_timeout {
             self.handle_timeout(); // Careful
             return;
         }
 
-        let rtt_seconds = rtt as f64 * 0.000001;
-        self.ewma_rtt = 0.95 * self.ewma_rtt + 0.05 * rtt as f64 * 0.000001;
+        let rtt_seconds = rtt_us as f64 * 1e-6;
+        self.ewma_rtt = 0.95 * self.ewma_rtt + 0.05 * rtt_seconds;
         if self.base_rtt <= 0.0 || rtt_seconds < self.base_rtt { // careful
             self.base_rtt = rtt_seconds;
         }
 
         self.pkts_in_last_rtt = acked as f64 / self.mss as f64;
         let now = time::get_time();
-        let elapsed = (now - self.start_time).num_milliseconds() as f64 * 0.001;
+        let elapsed = (now - self.start_time).num_milliseconds() as f64 * 1e-3;
         //let mut  float_rin = rin as f64;
         //let mut float_rout = rout as f64; // careful
 
@@ -377,7 +378,7 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
 
         if self.max_rout < self.ewma_rout {
             self.max_rout = self.ewma_rout;
-            if self.bw_est_mode == true {
+            if self.bw_est_mode {
                 self.uest = self.max_rout;
             }
         }
@@ -392,7 +393,7 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
             self.rout_history.push(rout);
             self.zout_history.push(self.uest - rout);
             self.zt_history.push(zt);
-            self.rtt_history.push(self.rtt.num_milliseconds() as f64 * 0.001);
+            self.rtt_history.push(self.rtt.num_milliseconds() as f64 * 1e-3);
             self.last_hist_update = self.last_hist_update + self.measurement_interval;
         }
 
@@ -419,21 +420,21 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
 
         self.logger.as_ref().map(|log| {
             debug!(log, "[nimbus] got ack"; 
-                   "ID" => self.sock_id,
-                   "base_rtt" => self.base_rtt,
-                   "curr_rate" => self.rate * 8.0,
-                   "curr_cwnd" => self.cwnd[0],
-                   "newly_acked" => acked,
-                   "rin" => rin * 8.0,
-                   "rout" => rout * 8.0,
-                   "ewma_rin" => self.ewma_rin * 8.0,
-                   "ewma_rout" => self.ewma_rout * 8.0,
-                   "max_ewma_rout" => self.max_rout * 8.0,
-                   "zt" => zt * 8.0,
-                   "rtt" => rtt_seconds,
-                   "uest" => self.uest * 8.0,
-                   "elapsed" => elapsed,
-                   );
+                "ID" => self.sock_id,
+                "base_rtt" => self.base_rtt,
+                "curr_rate" => self.rate * 8.0,
+                "curr_cwnd" => self.cwnd[0],
+                "newly_acked" => acked,
+                "rin" => rin * 8.0,
+                "rout" => rout * 8.0,
+                "ewma_rin" => self.ewma_rin * 8.0,
+                "ewma_rout" => self.ewma_rout * 8.0,
+                "max_ewma_rout" => self.max_rout * 8.0,
+                "zt" => zt * 8.0,
+                "rtt" => rtt_seconds,
+                "uest" => self.uest * 8.0,
+                "elapsed" => elapsed,
+            );
         });
         //n.last_ack = m.Ack Careful
     }
@@ -697,10 +698,7 @@ impl<T: Ipc> Nimbus<T> {
     }
 
     fn update_rate_mul_tcp(&mut self, new_bytes_acked: u64) {
-        let mut total_cwnd = 0.0;
-        for i in 0..self.xtcp_flows {
-            total_cwnd += self.cwnd[i as usize];
-        }
+        let total_cwnd: f64 = self.cwnd.iter().sum();
 
         for i in 0..self.xtcp_flows {
             let mut xtcp_new_byte_acked = (new_bytes_acked as f64) * (self.cwnd[i as usize] / total_cwnd);
@@ -715,9 +713,7 @@ impl<T: Ipc> Nimbus<T> {
             }
 
             self.cwnd[i as usize] += self.mss as f64 * (xtcp_new_byte_acked / self.cwnd[i as usize]);
-            if self.cwnd[i as usize] > self.cwnd_clamp {
-                self.cwnd[i as usize] = self.cwnd_clamp;
-            }
+            self.cwnd[i as usize] = self.cwnd[i as usize].min(self.cwnd_clamp);
         }
 
         if self.master_mode {
