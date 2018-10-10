@@ -7,10 +7,11 @@ extern crate portus;
 extern crate rand;
 extern crate rustfft;
 extern crate num_complex;
+
 use portus::{CongAlg, Config, Datapath, DatapathInfo, DatapathTrait, Report};
 use portus::ipc::Ipc;
 use portus::lang::Scope;
-use rand::{thread_rng, ThreadRng, Rng};
+use rand::{thread_rng, ThreadRng, Rng, distributions::Uniform};
 use rustfft::FFT;
 use num_complex::Complex;
 
@@ -477,22 +478,23 @@ impl<T: Ipc> Nimbus<T> {
     }
 
     fn mul_tcp_drop(&mut self) {
-        let mut total_cwnd = 0.0;
-        for i in  0..self.xtcp_flows{
-            total_cwnd += self.cwnd[i as usize]
-        }
+        let total_cwnd: f64 = self.cwnd.iter().sum();
 
-        let mut j = rand::random::<f64>();
-        let mut i = 0;
-        for k in 0..self.xtcp_flows {
-            j -= self.cwnd[k as usize] / total_cwnd;
-            if j < 0.0 {
-                i = k;
-                break;
-            }
-        }
+        let mut rng = thread_rng();
+        let bounds = Uniform::new(0, total_cwnd as u64);
+        let j: u64 = rng.sample(bounds);
 
-        if (time::get_time() - self.last_drop[0]).num_milliseconds() as f64 * 0.001 < self.base_rtt {
+        let i = self.cwnd.iter()
+            .scan(0, |cum, &x| {
+                *cum += x as u64;
+                Some(*cum)
+            })
+            .position(|x| {
+                x > j
+            })
+            .unwrap_or_else(|| self.xtcp_flows as usize - 1);
+
+        if (time::get_time() - self.last_drop[i]).num_milliseconds() as f64 * 0.001 < self.base_rtt {
             return;
         }
 
@@ -500,7 +502,7 @@ impl<T: Ipc> Nimbus<T> {
         self.update_rate_mul_tcp(0);
         // not perfect
         self.ssthresh[i as usize] = self.cwnd[i as usize];
-        self.rate = self.rate.max(0.05*self.uest);
+        self.rate = self.rate.max(0.05 * self.uest);
         match self.flow_mode {
             FlowMode::XTCP => self.send_pattern(self.rate, self.wait_time),
             _ => (),
