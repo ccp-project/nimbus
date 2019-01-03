@@ -446,7 +446,7 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
         self.last_update = time::get_time();
 
         self.logger.as_ref().map(|log| {
-            debug!(log, "[nimbus] got ack";
+            info!(log, "[nimbus] got ack";
                 "ID" => self.sock_id,
                 "base_rtt" => self.base_rtt,
                 "curr_rate" => self.rate * 8.0,
