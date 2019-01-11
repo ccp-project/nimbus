@@ -2,20 +2,20 @@
 extern crate clap;
 #[macro_use]
 extern crate slog;
-extern crate time;
+extern crate num_complex;
 extern crate portus;
 extern crate rand;
 extern crate rustfft;
-extern crate num_complex;
+extern crate time;
 
-use portus::{CongAlg, Config, Datapath, DatapathInfo, DatapathTrait, Report};
+use num_complex::Complex;
 use portus::ipc::Ipc;
 use portus::lang::Scope;
-use rand::{thread_rng, ThreadRng, Rng, distributions::Uniform};
+use portus::{Config, CongAlg, Datapath, DatapathInfo, DatapathTrait, Report};
+use rand::{distributions::Uniform, thread_rng, Rng, ThreadRng};
 use rustfft::FFT;
-use num_complex::Complex;
 
-arg_enum!{
+arg_enum! {
 #[derive(Clone, Copy, Debug)]
 pub enum FlowMode {
     XTCP,
@@ -23,7 +23,7 @@ pub enum FlowMode {
 }
 }
 
-arg_enum!{
+arg_enum! {
 #[derive(Clone, Copy, Debug)]
 pub enum DelayMode {
     Copa,
@@ -32,7 +32,7 @@ pub enum DelayMode {
 }
 }
 
-arg_enum!{
+arg_enum! {
 #[derive(Clone, Copy, Debug)]
 pub enum LossMode {
     Cubic,
@@ -96,14 +96,13 @@ pub struct Nimbus<T: Ipc> {
     ewma_rout: f64,
     use_ewma: bool,
     //set_win_cap: bool,
-
     master_mode: bool,
     switching_master: bool,
     r: ThreadRng,
     //last_slave_mode: time::Timespec,
 
     //cubic_init_cwnd: f64,
-    cubic_cwnd:  f64,
+    cubic_cwnd: f64,
     cubic_ssthresh: f64,
     cwnd_cnt: f64,
     tcp_friendliness: bool,
@@ -161,7 +160,7 @@ impl Default for NimbusConfig {
             loss_mode_arg: LossMode::MulTCP,
             uest_arg: 96.0 * 125000.0,
             use_ewma_arg: false,
-            set_win_cap_arg: false ,
+            set_win_cap_arg: false,
         }
     }
 }
@@ -171,6 +170,7 @@ impl<T: Ipc> Nimbus<T> {
         if (time::get_time() - self.start_time).num_seconds() < 1 {
             rate = 2_000_000.0;
         }
+
         let win = (self.mss as f64).max(rate * 2.0 * (self.rtt.num_milliseconds() as f64) * 0.001);
         self.control_channel
             .update_field(&self.sc, &[("Rate", rate as u32), ("Cwnd", win as u32)])
@@ -178,19 +178,35 @@ impl<T: Ipc> Nimbus<T> {
     }
 
     fn install(&mut self, wait_time: time::Duration) -> Scope {
-        self.control_channel.set_program(
-            String::from("nimbus_program"), Some(&[("report_time", wait_time.num_microseconds().unwrap() as u32)][..])
-        ).unwrap()
+        self.control_channel
+            .set_program(
+                String::from("nimbus_program"),
+                Some(&[("report_time", wait_time.num_microseconds().unwrap() as u32)][..]),
+            )
+            .unwrap()
     }
 
     fn get_fields(&mut self, m: &Report) -> Option<(u32, u32, f64, f64, u32, bool)> {
         let sc = &self.sc;
-        let acked = m.get_field("Report.acked", sc).expect("expected acked field in returned measurement") as u32;
-        let rtt = m.get_field("Report.rtt", sc).expect("expected rtt field in returned measurement") as u32;
-        let rin = m.get_field("Report.rin", sc).expect("expected rin field in returned measurement") as f64;
-        let rout = m.get_field("Report.rout", sc).expect("expected rout field in returned measurement") as f64;
-        let loss = m.get_field("Report.loss", sc).expect("expected loss field in returned measurement") as u32;
-        let was_timeout = m.get_field("Report.timeout", sc).expect("expected timeout field in returned measurement") == 1;
+        let acked = m
+            .get_field("Report.acked", sc)
+            .expect("expected acked field in returned measurement") as u32;
+        let rtt = m
+            .get_field("Report.rtt", sc)
+            .expect("expected rtt field in returned measurement") as u32;
+        let rin = m
+            .get_field("Report.rin", sc)
+            .expect("expected rin field in returned measurement") as f64;
+        let rout = m
+            .get_field("Report.rout", sc)
+            .expect("expected rout field in returned measurement") as f64;
+        let loss = m
+            .get_field("Report.loss", sc)
+            .expect("expected loss field in returned measurement") as u32;
+        let was_timeout = m
+            .get_field("Report.timeout", sc)
+            .expect("expected timeout field in returned measurement")
+            == 1;
         Some((acked, rtt, rin, rout, loss, was_timeout))
     }
 }
@@ -203,8 +219,10 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
     }
 
     fn init_programs(_cfg: Config<T, Self>) -> Vec<(String, String)> {
-        vec![
-            (String::from("nimbus_program"), String::from("
+        vec![(
+            String::from("nimbus_program"),
+            String::from(
+                "
                 (def 
                     (Report
                         (volatile acked 0)
@@ -233,8 +251,9 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
                     (report)
                     (:= Micros 0)
                 )
-            ")),
-        ]
+            ",
+            ),
+        )]
     }
 
     fn create(control: Datapath<T>, cfg: Config<T, Nimbus<T>>, info: DatapathInfo) -> Self {
@@ -259,7 +278,6 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
             uest: cfg.config.uest_arg,
             use_ewma: cfg.config.use_ewma_arg,
             //set_win_cap:  cfg.config.set_win_cap_arg,
-
             base_rtt: -0.001f64, // careful
             last_drop: vec![],
             last_update: time::get_time(),
@@ -295,7 +313,6 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
             ewma_rin: 0.0f64,
             ewma_rout: 0.0f64,
 
-
             wait_time: time::Duration::milliseconds(5),
 
             master_mode: true,
@@ -305,7 +322,7 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
 
             //cubic_init_cwnd: 10f64,
             cubic_cwnd: 10f64,
-            cubic_ssthresh: ((0x7fffffff as f64)/ 1448.0),
+            cubic_ssthresh: ((0x7fffffff as f64) / 1448.0),
             cwnd_cnt: 0f64,
             tcp_friendliness: true,
             cubic_beta: 0.3f64,
@@ -328,9 +345,18 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
             cnt: 0f64,
         };
 
-        s.cwnd = (0..s.xtcp_flows).map(|_| s.rate / (s.xtcp_flows as f64)).collect();
+        s.cwnd = (0..s.xtcp_flows)
+            .map(|_| s.rate / (s.xtcp_flows as f64))
+            .collect();
         s.last_drop = (0..s.xtcp_flows).map(|_| time::get_time()).collect();
         s.ssthresh = (0..s.xtcp_flows).map(|_| s.cwnd_clamp).collect();
+
+        s.logger.as_ref().map(|log| {
+            info!(log, "[nimbus] starting";
+                "use_switching" => s.use_switching,
+                "mode" => ?s.flow_mode,
+            );
+        });
 
         //s.cubic_reset(); Careful
         let wt = s.wait_time;
@@ -340,9 +366,8 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
         s
     }
 
-
     fn on_report(&mut self, _sock_id: u32, m: Report) {
-        let (acked, rtt_us, mut rin, mut rout, loss, was_timeout) =  self.get_fields(&m).unwrap();
+        let (acked, rtt_us, mut rin, mut rout, loss, was_timeout) = self.get_fields(&m).unwrap();
 
         self.rtt = time::Duration::microseconds(rtt_us as i64);
 
@@ -358,7 +383,8 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
 
         let rtt_seconds = rtt_us as f64 * 1e-6;
         self.ewma_rtt = 0.95 * self.ewma_rtt + 0.05 * rtt_seconds;
-        if self.base_rtt <= 0.0 || rtt_seconds < self.base_rtt { // careful
+        if self.base_rtt <= 0.0 || rtt_seconds < self.base_rtt {
+            // careful
             self.base_rtt = rtt_seconds;
         }
 
@@ -386,14 +412,15 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
         let mut zt = self.uest * (rin / rout) - rin;
         if zt.is_nan() {
             zt = 0.0;
-        } 
+        }
 
         while now > self.last_hist_update {
             self.rin_history.push(rin);
             self.rout_history.push(rout);
             self.zout_history.push(self.uest - rout);
             self.zt_history.push(zt);
-            self.rtt_history.push(self.rtt.num_milliseconds() as f64 * 1e-3);
+            self.rtt_history
+                .push(self.rtt.num_milliseconds() as f64 * 1e-3);
             self.last_hist_update = self.last_hist_update + self.measurement_interval;
         }
 
@@ -419,7 +446,7 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
         self.last_update = time::get_time();
 
         self.logger.as_ref().map(|log| {
-            debug!(log, "[nimbus] got ack"; 
+            debug!(log, "[nimbus] got ack";
                 "ID" => self.sock_id,
                 "base_rtt" => self.base_rtt,
                 "curr_rate" => self.rate * 8.0,
@@ -461,7 +488,7 @@ impl<T: Ipc> Nimbus<T> {
         self.cubic_cwnd = self.cubic_cwnd * (1.0 - self.cubic_beta);
         self.cubic_ssthresh = self.cubic_cwnd;
         self.cwnd[0] = self.cubic_cwnd * 1448.0;
-        self.rate = self.cwnd[0]/(self.rtt.num_milliseconds() as f64 * 0.001);
+        self.rate = self.cwnd[0] / (self.rtt.num_milliseconds() as f64 * 0.001);
         match self.flow_mode {
             FlowMode::XTCP => self.send_pattern(self.rate, self.wait_time),
             _ => (),
@@ -482,20 +509,25 @@ impl<T: Ipc> Nimbus<T> {
         let total_cwnd: f64 = self.cwnd.iter().sum();
 
         let mut rng = thread_rng();
+        if total_cwnd as u64 == 0 {
+            return;
+        }
+
         let bounds = Uniform::new(0, total_cwnd as u64);
         let j: u64 = rng.sample(bounds);
 
-        let i = self.cwnd.iter()
+        let i = self
+            .cwnd
+            .iter()
             .scan(0, |cum, &x| {
                 *cum += x as u64;
                 Some(*cum)
             })
-            .position(|x| {
-                x > j
-            })
+            .position(|x| x > j)
             .unwrap_or_else(|| self.xtcp_flows as usize - 1);
 
-        if (time::get_time() - self.last_drop[i]).num_milliseconds() as f64 * 0.001 < self.base_rtt {
+        if (time::get_time() - self.last_drop[i]).num_milliseconds() as f64 * 0.001 < self.base_rtt
+        {
             return;
         }
 
@@ -531,15 +563,15 @@ impl<T: Ipc> Nimbus<T> {
         match self.delay_mode {
             DelayMode::Vegas => {
                 let mut total_cwnd = 0.0;
-                for i in  0..self.xtcp_flows{
+                for i in 0..self.xtcp_flows {
                     total_cwnd += self.cwnd[i as usize];
                 }
                 self.base_rtt = 0.05; // careful
-                let in_queue = total_cwnd * ((curr_rtt - 0.05) / curr_rtt); 
+                let in_queue = total_cwnd * ((curr_rtt - 0.05) / curr_rtt);
 
-                if self.ewma_rtt < 1.05 * self.base_rtt && curr_rtt < 1.05 * self.base_rtt{
+                if self.ewma_rtt < 1.05 * self.base_rtt && curr_rtt < 1.05 * self.base_rtt {
                     self.cwnd[0] += 0.1 * new_bytes_acked as f64;
-                } else if in_queue< 30.0 * self.mss as f64 {
+                } else if in_queue < 30.0 * self.mss as f64 {
                     self.cwnd[0] += self.mss as f64 * (new_bytes_acked as f64 / total_cwnd);
                 } else if in_queue > 40.0 * self.mss as f64 {
                     self.cwnd[0] -= self.mss as f64 * (new_bytes_acked as f64 / total_cwnd);
@@ -559,15 +591,18 @@ impl<T: Ipc> Nimbus<T> {
             }
             DelayMode::Copa => {
                 let mut increase = false;
-                if (curr_rtt * self.mss as f64) > ((curr_rtt - 1.2 * self.base_rtt) * (1.9 / 2.0) * self.cwnd[0]) {
+                if (curr_rtt * self.mss as f64)
+                    > ((curr_rtt - 1.2 * self.base_rtt) * (1.9 / 2.0) * self.cwnd[0])
+                {
                     increase = true;
                     self.cur_direction += 1.0;
                 } else {
                     self.cur_direction -= 1.0;
                 }
                 if (time::get_time() - self.prev_update_rtt) > self.rtt {
-                    if (self.prev_direction > 0.0 && self.cur_direction > 0.0) 
-                        || (self.prev_direction < 0.0 && self.cur_direction < 0.0) {
+                    if (self.prev_direction > 0.0 && self.cur_direction > 0.0)
+                        || (self.prev_direction < 0.0 && self.cur_direction < 0.0)
+                    {
                         self.velocity *= 2.0;
                     } else {
                         self.velocity = 1.0;
@@ -579,11 +614,8 @@ impl<T: Ipc> Nimbus<T> {
                     self.cur_direction = 0.0;
                     self.prev_update_rtt = time::get_time();
                 }
-                let change = (
-                    self.velocity 
-                        * self.mss as f64 
-                        * new_bytes_acked as f64
-                ) / (self.cwnd[0] * (1.0 / 2.0));
+                let change = (self.velocity * self.mss as f64 * new_bytes_acked as f64)
+                    / (self.cwnd[0] * (1.0 / 2.0));
 
                 if increase {
                     self.cwnd[0] += change;
@@ -595,15 +627,16 @@ impl<T: Ipc> Nimbus<T> {
                     }
                 }
                 self.rate = self.cwnd[0] / curr_rtt;
-            } 
+            }
             DelayMode::Nimbus => {
                 let delta = curr_rtt;
-                self.rate = rin 
-                    + self.alpha * (self.uest - zt - rin) 
-                    - ((self.uest * self.beta) / delta) 
-                    * (curr_rtt - (self.delay_threshold * self.base_rtt));
+                self.rate = rin + self.alpha * (self.uest - zt - rin)
+                    - ((self.uest * self.beta) / delta)
+                        * (curr_rtt - (self.delay_threshold * self.base_rtt));
                 if self.delay_threshold > self.init_delay_threshold {
-                    self.delay_threshold -= ((self.measurement_interval.num_milliseconds() as f64 * 0.001) / 0.1) * 0.05;
+                    self.delay_threshold -=
+                        ((self.measurement_interval.num_milliseconds() as f64 * 0.001) / 0.1)
+                            * 0.05;
                 }
             }
         }
@@ -663,7 +696,8 @@ impl<T: Ipc> Nimbus<T> {
     fn cubic_update(&mut self) {
         self.ack_cnt = self.ack_cnt + 1.0;
         if self.epoch_start <= 0.0 {
-            self.epoch_start = (time::get_time().sec as f64) + f64::from(time::get_time().nsec) / 1e9;
+            self.epoch_start =
+                (time::get_time().sec as f64) + f64::from(time::get_time().nsec) / 1e9;
             if self.cubic_cwnd < self.wlast_max {
                 self.k = (0.0f64.max((self.wlast_max - self.cubic_cwnd) / self.c)).powf(1.0 / 3.0);
                 self.origin_point = self.wlast_max;
@@ -674,8 +708,9 @@ impl<T: Ipc> Nimbus<T> {
             self.ack_cnt = 1.0;
             self.wtcp = self.cubic_cwnd;
         }
-        let t = (time::get_time().sec as f64) + f64::from(time::get_time().nsec) / 1e9 + self.d_min - self.epoch_start;
-        let target = self.origin_point + self.c*((t - self.k)*(t - self.k)*(t - self.k));
+        let t = (time::get_time().sec as f64) + f64::from(time::get_time().nsec) / 1e9 + self.d_min
+            - self.epoch_start;
+        let target = self.origin_point + self.c * ((t - self.k) * (t - self.k) * (t - self.k));
         if target > self.cubic_cwnd {
             self.cnt = self.cubic_cwnd / (target - self.cubic_cwnd);
         } else {
@@ -687,7 +722,9 @@ impl<T: Ipc> Nimbus<T> {
     }
 
     fn cubic_tcp_friendliness(&mut self) {
-        self.wtcp = self.wtcp + (((3.0 * self.cubic_beta) / (2.0 - self.cubic_beta)) * (self.ack_cnt / self.cubic_cwnd));
+        self.wtcp = self.wtcp
+            + (((3.0 * self.cubic_beta) / (2.0 - self.cubic_beta))
+                * (self.ack_cnt / self.cubic_cwnd));
         self.ack_cnt = 0.0;
         if self.wtcp > self.cubic_cwnd {
             let max_cnt = self.cubic_cwnd / (self.wtcp - self.cubic_cwnd);
@@ -701,7 +738,8 @@ impl<T: Ipc> Nimbus<T> {
         let total_cwnd: f64 = self.cwnd.iter().sum();
 
         for i in 0..self.xtcp_flows {
-            let mut xtcp_new_byte_acked = (new_bytes_acked as f64) * (self.cwnd[i as usize] / total_cwnd);
+            let mut xtcp_new_byte_acked =
+                (new_bytes_acked as f64) * (self.cwnd[i as usize] / total_cwnd);
             if self.cwnd[i as usize] < self.ssthresh[i as usize] {
                 if self.cwnd[i as usize] + xtcp_new_byte_acked > self.ssthresh[i as usize] {
                     xtcp_new_byte_acked -= self.ssthresh[i as usize] - self.cwnd[i as usize];
@@ -712,14 +750,15 @@ impl<T: Ipc> Nimbus<T> {
                 }
             }
 
-            self.cwnd[i as usize] += self.mss as f64 * (xtcp_new_byte_acked / self.cwnd[i as usize]);
+            self.cwnd[i as usize] +=
+                self.mss as f64 * (xtcp_new_byte_acked / self.cwnd[i as usize]);
             self.cwnd[i as usize] = self.cwnd[i as usize].min(self.cwnd_clamp);
         }
 
         if self.master_mode {
             self.rate = total_cwnd / (self.rtt.num_milliseconds() as f64 * 0.001);
         } else {
-            self.rate = total_cwnd / self.ewma_rtt;        
+            self.rate = total_cwnd / self.ewma_rtt;
         }
 
         self.ewma_rate = self.rate
@@ -732,19 +771,19 @@ impl<T: Ipc> Nimbus<T> {
         phase -= phase.floor();
         let up_ratio = 0.25;
         if phase < up_ratio {
-            return self.rate 
-                + self.pulse_size 
-                    * fr_modified 
+            return self.rate
+                + self.pulse_size
+                    * fr_modified
                     * (2.0 * std::f64::consts::PI * phase * (0.5 / up_ratio)).sin();
         } else {
-            return self.rate 
-                + (up_ratio / (1.0 - up_ratio)) 
-                    * self.pulse_size 
-                    * fr_modified 
-                    * (2.0 
-                       * std::f64::consts::PI 
-                       * (0.5 + (phase - up_ratio) * (0.5 / (1.0 - up_ratio)))
-                    ).sin();
+            return self.rate
+                + (up_ratio / (1.0 - up_ratio))
+                    * self.pulse_size
+                    * fr_modified
+                    * (2.0
+                        * std::f64::consts::PI
+                        * (0.5 + (phase - up_ratio) * (0.5 / (1.0 - up_ratio))))
+                        .sin();
         }
     }
 
@@ -755,16 +794,16 @@ impl<T: Ipc> Nimbus<T> {
 
         match self.flow_mode {
             FlowMode::Delay => return,
-            _ if (time::get_time() - self.last_switch_time).num_seconds() < 5 => {
-                return
-            }
+            _ if (time::get_time() - self.last_switch_time).num_seconds() < 5 => return,
             _ => (),
         };
-        
-        self.delay_threshold = self.init_delay_threshold.max((rtt.num_milliseconds() as f64 * 0.001) / self.base_rtt);
+
+        self.delay_threshold = self
+            .init_delay_threshold
+            .max((rtt.num_milliseconds() as f64 * 0.001) / self.base_rtt);
 
         self.logger.as_ref().map(|log| {
-            debug!(log, "switched mode"; 
+            debug!(log, "switched mode";
                 "ID" => self.sock_id,
                 "elapsed" => (time::get_time() - self.start_time).num_milliseconds() as f64 * 0.001,
                 "from" =>  ?self.flow_mode,
@@ -792,7 +831,7 @@ impl<T: Ipc> Nimbus<T> {
         };
 
         self.logger.as_ref().map(|log| {
-            debug!(log, "switched mode"; 
+            debug!(log, "switched mode";
                 "ID" => self.sock_id,
                 "elapsed" => (time::get_time() - self.start_time).num_milliseconds() as f64 * 0.001,
                 "from" =>  ?self.flow_mode,
@@ -801,10 +840,8 @@ impl<T: Ipc> Nimbus<T> {
         });
 
         self.flow_mode = FlowMode::XTCP;
-        self.rate = self.rout_history[
-            self.rout_history.len() 
-                - ((5.0 / (self.measurement_interval.num_milliseconds() as f64 * 0.001)) as usize)
-        ];
+        self.rate = self.rout_history[self.rout_history.len()
+            - ((5.0 / (self.measurement_interval.num_milliseconds() as f64 * 0.001)) as usize)];
 
         match self.loss_mode {
             LossMode::Cubic => {
@@ -817,8 +854,8 @@ impl<T: Ipc> Nimbus<T> {
             }
             LossMode::MulTCP => {
                 for i in 0..self.xtcp_flows {
-                    self.cwnd[i as usize] = self.rate 
-                        * (self.rtt.num_milliseconds() as f64 * 0.001) 
+                    self.cwnd[i as usize] = self.rate
+                        * (self.rtt.num_milliseconds() as f64 * 0.001)
                         / (self.xtcp_flows as f64);
                     self.ssthresh[i as usize] = self.cwnd[i as usize];
                 }
@@ -872,10 +909,10 @@ impl<T: Ipc> Nimbus<T> {
             clean_rtt.push(Complex::new(raw_rtt[i as usize], 0.0));
         }
 
-        let avg_rtt = time::Duration::milliseconds((
-            1e3 * self.mean_complex(
-                &clean_rtt[(0.75*(clean_rtt.len() as f32)) as usize..]
-            )) as i64);
+        let avg_rtt = time::Duration::milliseconds(
+            (1e3 * self.mean_complex(&clean_rtt[(0.75 * (clean_rtt.len() as f32)) as usize..]))
+                as i64,
+        );
         let avg_zt = self.mean_complex(&clean_zt[(0.75 * (clean_zt.len() as f32)) as usize..]);
 
         clean_zt = self.detrend(clean_zt);
@@ -889,8 +926,8 @@ impl<T: Ipc> Nimbus<T> {
         let mut fft_zout = clean_zout.clone();
         fft_zout_temp.process(&clean_zout[..], &mut fft_zout[..]);
 
-        let mut freq : Vec<f64> = Vec::new();
-        for i in 0..((n/2) as usize) {
+        let mut freq: Vec<f64> = Vec::new();
+        for i in 0..((n / 2) as usize) {
             freq.push(i as f64 * (1.0 / (n as f64 * t)));
         }
 
@@ -899,61 +936,66 @@ impl<T: Ipc> Nimbus<T> {
             FlowMode::Delay => 5.0,
             FlowMode::XTCP => 6.0,
         };
-        
+
         if self.master_mode {
             if avg_zt < 0.1 * self.uest {
                 self.ewma_elasticity = 0.0;
             } else if avg_zt > 0.9 * self.uest {
-                self.ewma_elasticity = (1.0 - self.ewma_alpha) * self.ewma_elasticity + self.ewma_alpha * 6.0;
+                self.ewma_elasticity =
+                    (1.0 - self.ewma_alpha) * self.ewma_elasticity + self.ewma_alpha * 6.0;
             }
 
             let (_, mean_zt) = self.find_peak(
-                2.2 * expected_peak, 
-                3.8 * expected_peak, 
-                &freq[..], 
+                2.2 * expected_peak,
+                3.8 * expected_peak,
+                &freq[..],
                 &fft_zt[..],
             );
             let (exp_peak_zt, _) = self.find_peak(
-                expected_peak - 0.5, 
-                expected_peak + 0.5, 
-                &freq[..], 
+                expected_peak - 0.5,
+                expected_peak + 0.5,
+                &freq[..],
                 &fft_zt[..],
             );
             let (exp_peak_zout, _) = self.find_peak(
-                expected_peak - 0.5, 
-                expected_peak + 0.5, 
-                &freq[..], 
+                expected_peak - 0.5,
+                expected_peak + 0.5,
+                &freq[..],
                 &fft_zout[..],
             );
             let (other_peak_zt, _) = self.find_peak(
-                expected_peak + 1.5, 
-                2.0 * expected_peak - 0.5, 
-                &freq[..], 
+                expected_peak + 1.5,
+                2.0 * expected_peak - 0.5,
+                &freq[..],
                 &fft_zt[..],
             );
             let (other_peak_zout, _) = self.find_peak(
-                expected_peak + 1.5, 
-                2.0 * expected_peak - 0.5, 
-                &freq[..], 
+                expected_peak + 1.5,
+                2.0 * expected_peak - 0.5,
+                &freq[..],
                 &fft_zout[..],
             );
             let mut elasticity2 = fft_zt[exp_peak_zt].norm() / fft_zt[other_peak_zt].norm();
-            let elasticity = (fft_zt[exp_peak_zt].norm() - mean_zt) / fft_zout[exp_peak_zout].norm();
+            let elasticity =
+                (fft_zt[exp_peak_zt].norm() - mean_zt) / fft_zout[exp_peak_zout].norm();
             if fft_zt[exp_peak_zt].norm() < 0.25 * fft_zout[exp_peak_zout].norm() {
                 elasticity2 = elasticity2.min(3.0);
-                elasticity2 *= ((fft_zt[exp_peak_zt].norm() / fft_zout[exp_peak_zout].norm()) / 0.25).min(1.0);
+                elasticity2 *=
+                    ((fft_zt[exp_peak_zt].norm() / fft_zout[exp_peak_zout].norm()) / 0.25).min(1.0);
             }
-            self.ewma_elasticity = (1.0 - self.ewma_alpha) * self.ewma_elasticity + self.ewma_alpha * elasticity2;
+            self.ewma_elasticity =
+                (1.0 - self.ewma_alpha) * self.ewma_elasticity + self.ewma_alpha * elasticity2;
 
             if (fft_zout[exp_peak_zout].norm() / fft_zout[other_peak_zout].norm()) < 2.0 {
-                self.ewma_elasticity = (1.0 - self.ewma_alpha) * self.ewma_elasticity + self.ewma_alpha * 3.0;
+                self.ewma_elasticity =
+                    (1.0 - self.ewma_alpha) * self.ewma_elasticity + self.ewma_alpha * 3.0;
             }
 
             let (exp_peak_zt_master, _) = self.find_peak(4.5, 6.5, &freq[..], &fft_zt[..]);
             let (exp_peak_zout_master, _) = self.find_peak(4.5, 6.5, &freq[..], &fft_zout[..]);
-            self.ewma_master = (1.0 - 2.0 * self.ewma_alpha) * self.ewma_master 
-                + 2.0 
-                    * self.ewma_alpha 
+            self.ewma_master = (1.0 - 2.0 * self.ewma_alpha) * self.ewma_master
+                + 2.0
+                    * self.ewma_alpha
                     * (fft_zt[exp_peak_zt_master].norm() / fft_zout[exp_peak_zout_master].norm());
 
             if (time::get_time() - self.start_time).num_seconds() < 15 {
@@ -971,7 +1013,7 @@ impl<T: Ipc> Nimbus<T> {
             }
 
             self.logger.as_ref().map(|log| {
-                debug!(log, "elasticity_inf"; 
+                debug!(log, "elasticity_inf";
                     "ID" => self.sock_id,
                     "Zout_peak_val" => fft_zout[exp_peak_zout].norm(),
                     "Zt_peak_val" => fft_zt[exp_peak_zt].norm(),
@@ -985,33 +1027,34 @@ impl<T: Ipc> Nimbus<T> {
             });
         } else {
             let (exp_peak_zout, _) = self.find_peak(
-                expected_peak - 0.5, 
-                expected_peak + 0.5, 
-                &freq[..], 
+                expected_peak - 0.5,
+                expected_peak + 0.5,
+                &freq[..],
                 &fft_zout[..],
             );
             let (exp_peak_zout2, _) = self.find_peak(
-                expected_peak2 - 0.5, 
-                expected_peak2 + 0.5, 
-                &freq[..], 
+                expected_peak2 - 0.5,
+                expected_peak2 + 0.5,
+                &freq[..],
                 &fft_zout[..],
             );
-            self.ewma_slave = (1.0 - 2.0 * self.ewma_alpha) * self.ewma_slave 
-                + 2.0 
-                    * self.ewma_alpha 
+            self.ewma_slave = (1.0 - 2.0 * self.ewma_alpha) * self.ewma_slave
+                + 2.0
+                    * self.ewma_alpha
                     * (fft_zout[exp_peak_zout2].norm() / fft_zout[exp_peak_zout].norm());
 
             let (exp_peak_zout_slave, _) = self.find_peak(4.5, 6.5, &freq[..], &fft_zout[..]);
             let (other_peak_zout_slave, _) = self.find_peak(7.0, 15.0, &freq[..], &fft_zout[..]);
-            self.ewma_elasticity = (1.0 - self.ewma_alpha) * self.ewma_elasticity 
-                + self.ewma_alpha 
-                    * (fft_zout[exp_peak_zout_slave].norm() / fft_zout[other_peak_zout_slave].norm());
+            self.ewma_elasticity = (1.0 - self.ewma_alpha) * self.ewma_elasticity
+                + self.ewma_alpha
+                    * (fft_zout[exp_peak_zout_slave].norm()
+                        / fft_zout[other_peak_zout_slave].norm());
 
             if (time::get_time() - self.start_time).num_seconds() < 15 {
                 return;
             }
 
-            if self.ewma_slave  > 1.25 {
+            if self.ewma_slave > 1.25 {
                 self.ewma_slave = 0.0;
                 match self.flow_mode {
                     FlowMode::Delay if (avg_zt > 0.1 * self.uest) => {
@@ -1026,7 +1069,7 @@ impl<T: Ipc> Nimbus<T> {
             }
 
             self.logger.as_ref().map(|log| {
-                debug!(log, "elasticity_inf"; 
+                debug!(log, "elasticity_inf";
                     "ID" => self.sock_id,
                     "Zout_peak_val" => fft_zout[exp_peak_zout].norm(),
                     "Zout2Peak_val" => fft_zout[exp_peak_zout2].norm(),
@@ -1047,7 +1090,7 @@ impl<T: Ipc> Nimbus<T> {
 
         if self.r.gen::<f64>() < (0.005 * (self.ewma_rin / self.uest)) {
             self.logger.as_ref().map(|log| {
-                debug!(log, "Switch To Master"; 
+                debug!(log, "Switch To Master";
                     "ID" => self.sock_id,
                     "EWMAElasticity" => self.ewma_elasticity,
                     "elapsed" => (time::get_time() - self.start_time).num_seconds(),
@@ -1068,7 +1111,7 @@ impl<T: Ipc> Nimbus<T> {
 
         if self.r.gen::<f64>() < 0.005 {
             self.logger.as_ref().map(|log| {
-                debug!(log, "Switch To Slave"; 
+                debug!(log, "Switch To Slave";
                     "ID" => self.sock_id,
                     "EWMAElasticity" => self.ewma_elasticity,
                     "EWMAMaster" => self.ewma_master,
@@ -1081,7 +1124,13 @@ impl<T: Ipc> Nimbus<T> {
         }
     }
 
-    fn find_peak(& self, start_freq: f64, end_freq: f64, xf: &[f64], fft: &[Complex<f64>]) -> (usize, f64) {
+    fn find_peak(
+        &self,
+        start_freq: f64,
+        end_freq: f64,
+        xf: &[f64],
+        fft: &[Complex<f64>],
+    ) -> (usize, f64) {
         let mut max_ind = 0 as usize;
         let mut mean = 0.0;
         let mut count = 0.0f64;
@@ -1113,9 +1162,9 @@ impl<T: Ipc> Nimbus<T> {
         return mean_val / (a.len() as f64);
     }
 
-    fn detrend(& self, a: Vec<Complex<f64>>) -> Vec<Complex<f64>> {
+    fn detrend(&self, a: Vec<Complex<f64>>) -> Vec<Complex<f64>> {
         let mean_val = self.mean_complex(&a[..]);
-        let mut b : Vec<Complex<f64>> = Vec::new();
+        let mut b: Vec<Complex<f64>> = Vec::new();
         for i in 0..a.len() {
             b.push(Complex::new(a[i].re - mean_val, 0.0));
         }
