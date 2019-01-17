@@ -638,6 +638,11 @@ impl<T: Ipc> Nimbus<T> {
                         ((self.measurement_interval.num_milliseconds() as f64 * 0.001) / 0.1)
                             * 0.05;
                 }
+
+                // bundler hack to ramp up faster
+                //if curr_rtt < 1.05 * self.base_rtt {
+                //    self.rate = self.rate.max(0.95 * self.uest);
+                //}
             }
         }
     }
