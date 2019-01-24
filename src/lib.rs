@@ -37,6 +37,7 @@ arg_enum! {
 pub enum LossMode {
     Cubic,
     MulTCP,
+    Bundle,
 }
 }
 
@@ -472,6 +473,7 @@ impl<T: Ipc> Nimbus<T> {
         match self.loss_mode {
             LossMode::Cubic => self.cubic_drop(),
             LossMode::MulTCP => self.mul_tcp_drop(),
+            LossMode::Bundle => (), // do nothing
         }
     }
 
@@ -656,6 +658,13 @@ impl<T: Ipc> Nimbus<T> {
         match self.loss_mode {
             LossMode::Cubic => self.update_rate_cubic(new_bytes_acked),
             LossMode::MulTCP => self.update_rate_mul_tcp(new_bytes_acked),
+            LossMode::Bundle => {
+                // the offered load will naturally match the fair share
+                // so just get out of the way
+                // pulsing is still needed to cut delays when appropriate
+                self.rate = 1.25 * self.ewma_rout;
+                self.ewma_rate = self.rate;
+            }
         }
     }
 
@@ -860,6 +869,7 @@ impl<T: Ipc> Nimbus<T> {
                     self.ssthresh[i as usize] = self.cwnd[i as usize];
                 }
             }
+            LossMode::Bundle => {}
         };
 
         self.last_switch_time = time::get_time();
