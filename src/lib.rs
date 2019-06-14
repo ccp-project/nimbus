@@ -119,6 +119,11 @@ pub struct Nimbus<T: Ipc> {
     ack_cnt: f64,
     cnt: f64,
 
+    bundler_qlen_target: f64,
+    bundler_last_qlen: f64,
+    bundler_qlen_factor: f64,
+    bundler_clamp_rate: f64,
+
     pkts_in_last_rtt: f64,
     velocity: f64,
     cur_direction: f64,
@@ -187,7 +192,7 @@ impl<T: Ipc> Nimbus<T> {
             .unwrap()
     }
 
-    fn get_fields(&mut self, m: &Report) -> Option<(u32, u32, f64, f64, u32, bool)> {
+    fn get_fields(&mut self, m: &Report) -> Option<(u32, u32, f64, f64, u32, bool, u32)> {
         let sc = &self.sc;
         let acked = m
             .get_field("Report.acked", sc)
@@ -208,7 +213,10 @@ impl<T: Ipc> Nimbus<T> {
             .get_field("Report.timeout", sc)
             .expect("expected timeout field in returned measurement")
             == 1;
-        Some((acked, rtt, rin, rout, loss, was_timeout))
+        let qlen = m
+            .get_field("Report.qlen", sc)
+            .expect("expected qlen field in returned measurement") as u32;
+        Some((acked, rtt, rin, rout, loss, was_timeout, qlen))
     }
 }
 
@@ -232,6 +240,7 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
                         (volatile rin 0)
                         (volatile rout 0)
                         (volatile timeout false)
+                        (volatile qlen 0)
                     )
                     (report_time 0)
                 )
@@ -242,6 +251,7 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
                     (:= Report.rout Flow.rate_incoming)
                     (:= Report.loss Ack.lost_pkts_sample)
                     (:= Report.timeout Flow.was_timeout)
+                    (:= Report.qlen Flow.bytes_pending)
                     (fallthrough)
                 )
                 (when (|| Report.timeout (> Report.loss 0))
@@ -344,6 +354,11 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
             k: 0f64,
             ack_cnt: 0f64,
             cnt: 0f64,
+
+            bundler_qlen_target: 200.0,
+            bundler_last_qlen: 0.,
+            bundler_qlen_factor: 1.0,
+            bundler_clamp_rate: 1e5,
         };
 
         s.cwnd = (0..s.xtcp_flows)
@@ -368,7 +383,8 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
     }
 
     fn on_report(&mut self, _sock_id: u32, m: Report) {
-        let (acked, rtt_us, mut rin, mut rout, loss, was_timeout) = self.get_fields(&m).unwrap();
+        let (acked, rtt_us, mut rin, mut rout, loss, was_timeout, qlen) =
+            self.get_fields(&m).unwrap();
 
         self.rtt = time::Duration::microseconds(rtt_us as i64);
 
@@ -396,7 +412,11 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
         //let mut float_rout = rout as f64; // careful
 
         self.ewma_rin = 0.2 * rin + 0.8 * self.ewma_rin;
-        self.ewma_rout = 0.2 * rout + 0.8 * self.ewma_rout;
+        //if self.ewma_rout == 0.0 {
+        //    self.ewma_rout = rout;
+        //}
+
+        self.ewma_rout = 0.02 * rout + 0.98 * self.ewma_rout;
 
         if self.use_ewma {
             rin = self.ewma_rin;
@@ -442,6 +462,12 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
             self.rate = self.elasticity_est_pulse().max(0.05 * self.uest);
         }
 
+        // controller to keep some queue at inbox
+        if let FlowMode::XTCP = self.flow_mode {
+            self.control_inbox_queue(qlen);
+        }
+        self.rate = self.rate.max(0.05 * self.uest);
+
         self.send_pattern(self.rate, self.wait_time);
         self.should_switch_flow_mode();
         self.last_update = time::get_time();
@@ -461,6 +487,8 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
                 "zt" => zt * 8.0,
                 "rtt" => rtt_seconds,
                 "uest" => self.uest * 8.0,
+                "qlen" => self.bundler_last_qlen,
+                "qlen_factor" => self.bundler_qlen_factor,
                 "elapsed" => elapsed,
             );
         });
@@ -469,6 +497,45 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
 }
 
 impl<T: Ipc> Nimbus<T> {
+    fn control_inbox_queue(&mut self, qlen: u32) {
+        let qlen = qlen as f64;
+
+        // beta / alpha == 1 / (update interval)
+        let alpha = 150.;
+        let beta = 15000.0;
+
+        // add a half bdp to the target
+        //let adj_target = self.bundler_qlen_target + (self.uest * self.base_rtt) / 1500.;
+        let adj_target = self.bundler_qlen_target;
+
+        //if qlen == self.bundler_last_qlen {
+        //    return;
+        //}
+
+        // p(t) <- p(t-T) + alpha * (q(t) - qref) + beta (q(t) - q(t-T))
+        //self.bundler_qlen_factor = self.bundler_qlen_factor
+        //    + alpha * (qlen - adj_target)
+        //    + beta * (qlen - self.bundler_last_qlen);
+
+        self.bundler_clamp_rate = self.bundler_clamp_rate
+            + alpha * (qlen - adj_target)
+            + beta * (qlen - self.bundler_last_qlen);
+
+        self.rate = 0.98 * self.rate + 0.02 * self.bundler_clamp_rate;
+
+        self.bundler_last_qlen = qlen;
+
+        //self.rate += self.bundler_qlen_factor * 100.;
+
+        //if qlen > 1.1 * self.bundler_qlen_target {
+        //    self.bundler_clamp_rate += (self.uest / 100.)
+        //        * ((qlen - self.bundler_qlen_target) / (self.bundler_qlen_target)).min(1.);
+        //} else if qlen < 0.9 * self.bundler_qlen_target {
+        //    self.bundler_clamp_rate += (self.uest / 100.)
+        //        * ((qlen - self.bundler_qlen_target) / (self.bundler_qlen_target)).min(1.);
+        //}
+    }
+
     fn handle_drop(&mut self) {
         match self.loss_mode {
             LossMode::Cubic => self.cubic_drop(),
@@ -662,8 +729,12 @@ impl<T: Ipc> Nimbus<T> {
                 // the offered load will naturally match the fair share
                 // so just get out of the way
                 // pulsing is still needed to cut delays when appropriate
-                self.rate = 1.25 * self.ewma_rout;
-                self.ewma_rate = self.rate;
+
+                //self.rate = 1.25 * self.ewma_rout;
+                //self.rate = self.bundler_clamp_rate;
+                //self.rate = self.ewma_rout + self.uest / 4.;
+                //self.rate = self.uest / 2.;
+                //self.ewma_rate = self.rate;
             }
         }
     }
@@ -774,6 +845,8 @@ impl<T: Ipc> Nimbus<T> {
     }
 
     fn elasticity_est_pulse(&mut self) -> f64 {
+        //return self.rate; // turn off pulsing
+
         let elapsed = (time::get_time() - self.start_time).num_milliseconds() as f64 * 0.001;
         let fr_modified = self.uest;
         let mut phase = elapsed * self.frequency;
@@ -785,7 +858,7 @@ impl<T: Ipc> Nimbus<T> {
                     * fr_modified
                     * (2.0 * std::f64::consts::PI * phase * (0.5 / up_ratio)).sin();
         } else {
-            return self.rate
+            let r = self.rate
                 + (up_ratio / (1.0 - up_ratio))
                     * self.pulse_size
                     * fr_modified
@@ -793,6 +866,11 @@ impl<T: Ipc> Nimbus<T> {
                         * std::f64::consts::PI
                         * (0.5 + (phase - up_ratio) * (0.5 / (1.0 - up_ratio))))
                         .sin();
+            return r;
+            //return match self.loss_mode {
+            //    LossMode::Bundle => r * 6.,
+            //    _ => r,
+            //};
         }
     }
 
