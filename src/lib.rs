@@ -211,6 +211,7 @@ pub struct Nimbus<T: Ipc> {
     bundler_qlen_target: f64,
     bundler_qlen_alpha: f64,
     bundler_qlen_beta: f64,
+    bundler_ewma_qlen: f64,
     bundler_last_qlen: f64,
     bundler_qlen_factor: f64,
     bundler_clamp_rate: f64,
@@ -429,6 +430,7 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
             bundler_qlen_target: cfg.config.bundler_qlen as f64,
             bundler_qlen_alpha: cfg.config.bundler_qlen_alpha,
             bundler_qlen_beta: cfg.config.bundler_qlen_beta,
+            bundler_ewma_qlen: 0.,
             bundler_last_qlen: 0.,
             bundler_qlen_factor: 1.0,
             bundler_clamp_rate: 1e5,
@@ -553,7 +555,7 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
                 "zt" => zt * 8.0,
                 "rtt" => rtt_seconds,
                 "uest" => self.uest * 8.0,
-                "qlen" => self.bundler_last_qlen,
+                "qlen" => self.bundler_ewma_qlen,
                 "qlen_factor" => self.bundler_qlen_factor,
                 "elapsed" => elapsed,
             );
@@ -566,68 +568,50 @@ impl<T: Ipc> Nimbus<T> {
     fn control_inbox_queue(&mut self, qlen: u32) {
         let qlen = qlen as f64;
 
+        //self.bundler_ewma_qlen = 0.98 * self.bundler_ewma_qlen + 0.02 * qlen;
+        //let qlen = self.bundler_ewma_qlen;
+
         // beta / alpha == 1 / (update interval)
         let alpha = self.bundler_qlen_alpha;
         let beta = self.bundler_qlen_beta;
 
-        // add a half bdp to the target
-        //let adj_target = self.bundler_qlen_target;
-
-        let elapsed = (time::get_time() - self.start_time).num_milliseconds() as f64 * 0.001;
-        let mut phase = elapsed * self.frequency;
-        phase -= phase.floor();
-
-        let adj_target = if phase < 0.25 {
-            // self.bundler_qlen_target - integrate mu / 4 sin(t pi / 50ms) from 0 to t
-            // self.bundler_qlen_target - mu / 4 * 50ms / pi * 1pkt/1500Bytes * (1 - cos(t pi/50ms))
-            let t = phase * 200.; //ms
-            self.bundler_qlen_target
-                - (self.uest / 4.)
-                    * (50e-3 / std::f64::consts::PI)
-                    * (1. / 1500.)
-                    * (1. - ((t * std::f64::consts::PI / 50.).cos()))
-        } else {
-            // self.bundler_qlen_target
-            //  - integrate mu / 4 sin(t pi / 50ms) from 0 to 50ms (above)
-            //  + integrate mu / 12 sin(t pi / 150ms) from 0 to 150ms)
-            let t = (phase - 0.25) * 200.;
-            let up_pulse_int =
-                (self.uest / 4.) * (50e-3 / std::f64::consts::PI) * (1. / 1500.) * (2.);
-            self.bundler_qlen_target - up_pulse_int
-                + (self.uest / 12.)
-                    * (150e-3 / std::f64::consts::PI)
-                    * (1. / 1500.)
-                    * (1. - ((t * std::f64::consts::PI / 150.).cos()))
-        };
+        //let elapsed = (time::get_time() - self.start_time).num_milliseconds() as f64 * 0.001;
+        //let mut phase = elapsed * self.frequency;
+        //phase -= phase.floor();
+        //let adj_target = if phase < 0.25 {
+        //    // self.bundler_qlen_target - integrate mu / 4 sin(t pi / 50ms) from 0 to t
+        //    // self.bundler_qlen_target - mu / 4 * 50ms / pi * 1pkt/1500Bytes * (1 - cos(t pi/50ms))
+        //    let t = phase * 200.; //ms
+        //    self.bundler_qlen_target
+        //        - (self.uest / 4.)
+        //            * (50e-3 / std::f64::consts::PI)
+        //            * (1. / 1500.)
+        //            * (1. - ((t * std::f64::consts::PI / 50.).cos()))
+        //} else {
+        //    // self.bundler_qlen_target
+        //    //  - integrate mu / 4 sin(t pi / 50ms) from 0 to 50ms (above)
+        //    //  + integrate mu / 12 sin(t pi / 150ms) from 0 to 150ms)
+        //    let t = (phase - 0.25) * 200.;
+        //    let up_pulse_int =
+        //        (self.uest / 4.) * (50e-3 / std::f64::consts::PI) * (1. / 1500.) * (2.);
+        //    self.bundler_qlen_target - up_pulse_int
+        //        + (self.uest / 12.)
+        //            * (150e-3 / std::f64::consts::PI)
+        //            * (1. / 1500.)
+        //            * (1. - ((t * std::f64::consts::PI / 150.).cos()))
+        //};
+        let adj_target = self.bundler_qlen_target;
 
         self.bundler_qlen_factor = adj_target;
-
-        //if qlen == self.bundler_last_qlen {
-        //    return;
-        //}
-
-        // p(t) <- p(t-T) + alpha * (q(t) - qref) + beta (q(t) - q(t-T))
-        //self.bundler_qlen_factor = self.bundler_qlen_factor
-        //    + alpha * (qlen - adj_target)
-        //    + beta * (qlen - self.bundler_last_qlen);
 
         self.bundler_clamp_rate = self.bundler_clamp_rate
             + alpha * (qlen - adj_target)
             + beta * ((qlen - adj_target) - self.bundler_last_qlen);
 
         self.rate = 0.98 * self.rate + 0.02 * self.bundler_clamp_rate;
+        //self.rate = self.bundler_clamp_rate;
 
         self.bundler_last_qlen = qlen - adj_target;
-
-        //self.rate += self.bundler_qlen_factor * 100.;
-
-        //if qlen > 1.1 * self.bundler_qlen_target {
-        //    self.bundler_clamp_rate += (self.uest / 100.)
-        //        * ((qlen - self.bundler_qlen_target) / (self.bundler_qlen_target)).min(1.);
-        //} else if qlen < 0.9 * self.bundler_qlen_target {
-        //    self.bundler_clamp_rate += (self.uest / 100.)
-        //        * ((qlen - self.bundler_qlen_target) / (self.bundler_qlen_target)).min(1.);
-        //}
     }
 
     fn handle_drop(&mut self) {
