@@ -108,6 +108,15 @@ pub struct NimbusConfig {
     #[structopt(long = "uest", default_value = "96.0")]
     pub uest: f64,
 
+    #[structopt(long = "bundler_qlen", default_value = "300")]
+    pub bundler_qlen: usize,
+
+    #[structopt(long = "bundler_qlen_alpha", default_value = "150.0")]
+    pub bundler_qlen_alpha: f64,
+
+    #[structopt(long = "bundler_qlen_beta", default_value = "15000.0")]
+    pub bundler_qlen_beta: f64,
+
     #[structopt(long = "flow_mode", default_value = "XTCP")]
     pub flow_mode: FlowMode,
 
@@ -200,6 +209,8 @@ pub struct Nimbus<T: Ipc> {
     cnt: f64,
 
     bundler_qlen_target: f64,
+    bundler_qlen_alpha: f64,
+    bundler_qlen_beta: f64,
     bundler_last_qlen: f64,
     bundler_qlen_factor: f64,
     bundler_clamp_rate: f64,
@@ -415,7 +426,9 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
             ack_cnt: 0f64,
             cnt: 0f64,
 
-            bundler_qlen_target: 200.0,
+            bundler_qlen_target: cfg.config.bundler_qlen as f64,
+            bundler_qlen_alpha: cfg.config.bundler_qlen_alpha,
+            bundler_qlen_beta: cfg.config.bundler_qlen_beta,
             bundler_last_qlen: 0.,
             bundler_qlen_factor: 1.0,
             bundler_clamp_rate: 1e5,
@@ -554,8 +567,8 @@ impl<T: Ipc> Nimbus<T> {
         let qlen = qlen as f64;
 
         // beta / alpha == 1 / (update interval)
-        let alpha = 150.;
-        let beta = 15000.0;
+        let alpha = self.bundler_qlen_alpha;
+        let beta = self.bundler_qlen_beta;
 
         // add a half bdp to the target
         //let adj_target = self.bundler_qlen_target + (self.uest * self.base_rtt) / 1500.;
