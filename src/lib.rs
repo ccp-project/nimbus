@@ -571,8 +571,36 @@ impl<T: Ipc> Nimbus<T> {
         let beta = self.bundler_qlen_beta;
 
         // add a half bdp to the target
-        //let adj_target = self.bundler_qlen_target + (self.uest * self.base_rtt) / 1500.;
-        let adj_target = self.bundler_qlen_target;
+        //let adj_target = self.bundler_qlen_target;
+
+        let elapsed = (time::get_time() - self.start_time).num_milliseconds() as f64 * 0.001;
+        let mut phase = elapsed * self.frequency;
+        phase -= phase.floor();
+
+        let adj_target = if phase < 0.25 {
+            // self.bundler_qlen_target - integrate mu / 4 sin(t pi / 50ms) from 0 to t
+            // self.bundler_qlen_target - mu / 4 * 50ms / pi * 1pkt/1500Bytes * (1 - cos(t pi/50ms))
+            let t = phase * 200.; //ms
+            self.bundler_qlen_target
+                - (self.uest / 4.)
+                    * (50e-3 / std::f64::consts::PI)
+                    * (1. / 1500.)
+                    * (1. - ((t * std::f64::consts::PI / 50.).cos()))
+        } else {
+            // self.bundler_qlen_target
+            //  - integrate mu / 4 sin(t pi / 50ms) from 0 to 50ms (above)
+            //  + integrate mu / 12 sin(t pi / 150ms) from 0 to 150ms)
+            let t = (phase - 0.25) * 200.;
+            let up_pulse_int =
+                (self.uest / 4.) * (50e-3 / std::f64::consts::PI) * (1. / 1500.) * (2.);
+            self.bundler_qlen_target - up_pulse_int
+                + (self.uest / 12.)
+                    * (150e-3 / std::f64::consts::PI)
+                    * (1. / 1500.)
+                    * (1. - ((t * std::f64::consts::PI / 150.).cos()))
+        };
+
+        self.bundler_qlen_factor = adj_target;
 
         //if qlen == self.bundler_last_qlen {
         //    return;
@@ -585,11 +613,11 @@ impl<T: Ipc> Nimbus<T> {
 
         self.bundler_clamp_rate = self.bundler_clamp_rate
             + alpha * (qlen - adj_target)
-            + beta * (qlen - self.bundler_last_qlen);
+            + beta * ((qlen - adj_target) - self.bundler_last_qlen);
 
         self.rate = 0.98 * self.rate + 0.02 * self.bundler_clamp_rate;
 
-        self.bundler_last_qlen = qlen;
+        self.bundler_last_qlen = qlen - adj_target;
 
         //self.rate += self.bundler_qlen_factor * 100.;
 
