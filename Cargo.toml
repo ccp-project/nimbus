@@ -4,7 +4,7 @@ version = "0.2.1"
 authors = ["Prateesh Goyal <prateesh@mit.edu>"]
 
 [dependencies]
-clap="2.29"
+failure = "0.1"
 num-complex="0.2"
 portus = "0.3.3"
 rand="0.5"
@@ -12,4 +12,5 @@ rustfft="1.0.1"
 slog = "2"
 slog-async = "2"
 slog-term = "2"
+structopt = "0.2"
 time="0.1"

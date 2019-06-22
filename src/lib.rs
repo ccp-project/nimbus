@@ -1,44 +1,124 @@
 #[macro_use]
-extern crate clap;
-#[macro_use]
 extern crate slog;
+extern crate failure;
 extern crate num_complex;
 extern crate portus;
 extern crate rand;
 extern crate rustfft;
+extern crate structopt;
 extern crate time;
 
+use failure::bail;
 use num_complex::Complex;
 use portus::ipc::Ipc;
 use portus::lang::Scope;
 use portus::{Config, CongAlg, Datapath, DatapathInfo, DatapathTrait, Report};
 use rand::{distributions::Uniform, thread_rng, Rng, ThreadRng};
 use rustfft::FFT;
+use structopt::StructOpt;
 
-arg_enum! {
 #[derive(Clone, Copy, Debug)]
 pub enum FlowMode {
     XTCP,
     Delay,
 }
+
+impl std::str::FromStr for FlowMode {
+    type Err = failure::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "XTCP" => Ok(FlowMode::XTCP),
+            "Delay" => Ok(FlowMode::Delay),
+            _ => bail!("Unknown FlowMode {}", s),
+        }
+    }
 }
 
-arg_enum! {
 #[derive(Clone, Copy, Debug)]
 pub enum DelayMode {
     Copa,
     Nimbus,
     Vegas,
 }
+
+impl std::str::FromStr for DelayMode {
+    type Err = failure::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Copa" => Ok(DelayMode::Copa),
+            "Nimbus" => Ok(DelayMode::Nimbus),
+            "Vegas" => Ok(DelayMode::Vegas),
+            _ => bail!("Unknown DelayMode {}", s),
+        }
+    }
 }
 
-arg_enum! {
 #[derive(Clone, Copy, Debug)]
 pub enum LossMode {
     Cubic,
     MulTCP,
     Bundle,
 }
+
+impl std::str::FromStr for LossMode {
+    type Err = failure::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Cubic" => Ok(LossMode::Cubic),
+            "MulTCP" => Ok(LossMode::MulTCP),
+            "Bundle" => Ok(LossMode::Bundle),
+            _ => bail!("Unknown LossMode {}", s),
+        }
+    }
+}
+
+#[derive(StructOpt, Debug, Clone)]
+#[structopt(name = "nimbus")]
+pub struct NimbusConfig {
+    #[structopt(long = "ipc", default_value = "unix")]
+    pub ipc: String,
+
+    #[structopt(long = "use_switching")]
+    pub use_switching: bool,
+
+    #[structopt(long = "no_bw_est_mode")]
+    pub bw_est_mode: bool,
+
+    #[structopt(long = "use_ewma")]
+    pub use_ewma: bool,
+
+    #[structopt(long = "set_win_cap")]
+    pub set_win_cap: bool,
+
+    #[structopt(long = "delay_threshold", default_value = "1.25")]
+    pub delay_threshold: f64,
+
+    #[structopt(long = "init_delay_threshold", default_value = "1.25")]
+    pub init_delay_threshold: f64,
+
+    #[structopt(long = "pulse_size", default_value = "0.25")]
+    pub pulse_size: f64,
+
+    #[structopt(long = "frequency", default_value = "5.0")]
+    pub frequency: f64,
+
+    #[structopt(long = "switching_thresh", default_value = "0.4")]
+    pub switching_thresh: f64,
+
+    #[structopt(long = "uest", default_value = "96.0")]
+    pub uest: f64,
+
+    #[structopt(long = "flow_mode", default_value = "XTCP")]
+    pub flow_mode: FlowMode,
+
+    #[structopt(long = "delay_mode", default_value = "Nimbus")]
+    pub delay_mode: DelayMode,
+
+    #[structopt(long = "loss_mode", default_value = "MulTCP")]
+    pub loss_mode: LossMode,
+
+    #[structopt(long = "xtcp_flows", default_value = "2")]
+    pub xtcp_flows: usize,
 }
 
 pub struct Nimbus<T: Ipc> {
@@ -129,46 +209,6 @@ pub struct Nimbus<T: Ipc> {
     cur_direction: f64,
     prev_direction: f64,
     prev_update_rtt: time::Timespec,
-}
-
-#[derive(Clone)]
-pub struct NimbusConfig {
-    pub use_switching_arg: bool,
-    pub bw_est_mode_arg: bool,
-    pub delay_threshold_arg: f64,
-    pub xtcp_flows_arg: i32,
-    pub init_delay_threshold_arg: f64,
-    pub frequency_arg: f64,
-    pub pulse_size_arg: f64,
-    pub switching_thresh_arg: f64,
-    pub flow_mode_arg: FlowMode,
-    pub delay_mode_arg: DelayMode,
-    pub loss_mode_arg: LossMode,
-    pub uest_arg: f64,
-    pub use_ewma_arg: bool,
-    pub set_win_cap_arg: bool,
-    // TODO make more things configurable
-}
-
-impl Default for NimbusConfig {
-    fn default() -> Self {
-        NimbusConfig {
-            use_switching_arg: false,
-            bw_est_mode_arg: true,
-            delay_threshold_arg: 1.25f64,
-            xtcp_flows_arg: 1,
-            init_delay_threshold_arg: 1.25,
-            frequency_arg: 5.0,
-            pulse_size_arg: 0.25,
-            switching_thresh_arg: 0.4,
-            flow_mode_arg: FlowMode::XTCP,
-            delay_mode_arg: DelayMode::Nimbus,
-            loss_mode_arg: LossMode::MulTCP,
-            uest_arg: 96.0 * 125000.0,
-            use_ewma_arg: false,
-            set_win_cap_arg: false,
-        }
-    }
 }
 
 impl<T: Ipc> Nimbus<T> {
@@ -268,6 +308,26 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
     }
 
     fn create(control: Datapath<T>, cfg: Config<T, Nimbus<T>>, info: DatapathInfo) -> Self {
+        cfg.logger.as_ref().map(|log| {
+            info!(log, "[nimbus] starting";
+                "ipc" => ?cfg.config.ipc,
+                "use_switching" => ?cfg.config.use_switching,
+                "bw_est_mode" => ?cfg.config.bw_est_mode ,
+                "use_ewma" => ?cfg.config.use_ewma ,
+                "set_win_cap" => ?cfg.config.set_win_cap ,
+                "delay_threshold" => ?cfg.config.delay_threshold ,
+                "init_delay_threshold" => ?cfg.config.init_delay_threshold ,
+                "pulse_size" => ?cfg.config.pulse_size ,
+                "frequency" => ?cfg.config.frequency ,
+                "switching_thresh" => ?cfg.config.switching_thresh,
+                "uest" => ?cfg.config.uest ,
+                "flow_mode" => ?cfg.config.flow_mode ,
+                "delay_mode" => ?cfg.config.delay_mode ,
+                "loss_mode" => ?cfg.config.loss_mode,
+                "xtcp_flows" => ?cfg.config.xtcp_flows,
+            );
+        });
+
         let mut s = Self {
             sock_id: info.sock_id,
             control_channel: control,
@@ -275,19 +335,19 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
             logger: cfg.logger,
             mss: info.mss,
 
-            use_switching: cfg.config.use_switching_arg,
-            bw_est_mode: cfg.config.bw_est_mode_arg,
-            delay_threshold: cfg.config.delay_threshold_arg,
-            xtcp_flows: cfg.config.xtcp_flows_arg,
-            init_delay_threshold: cfg.config.init_delay_threshold_arg,
-            frequency: cfg.config.frequency_arg,
-            pulse_size: cfg.config.pulse_size_arg,
-            //switching_thresh: cfg.config.switching_thresh_arg,
-            flow_mode: cfg.config.flow_mode_arg,
-            delay_mode: cfg.config.delay_mode_arg,
-            loss_mode: cfg.config.loss_mode_arg,
-            uest: cfg.config.uest_arg,
-            use_ewma: cfg.config.use_ewma_arg,
+            use_switching: cfg.config.use_switching,
+            bw_est_mode: !cfg.config.bw_est_mode, // default to true
+            delay_threshold: cfg.config.delay_threshold,
+            xtcp_flows: cfg.config.xtcp_flows as i32,
+            init_delay_threshold: cfg.config.init_delay_threshold,
+            frequency: cfg.config.frequency,
+            pulse_size: cfg.config.pulse_size,
+            //switching_thresh: cfg.config.switching_thresh,
+            flow_mode: cfg.config.flow_mode,
+            delay_mode: cfg.config.delay_mode,
+            loss_mode: cfg.config.loss_mode,
+            uest: cfg.config.uest,
+            use_ewma: cfg.config.use_ewma,
             //set_win_cap:  cfg.config.set_win_cap_arg,
             base_rtt: -0.001f64, // careful
             last_drop: vec![],
@@ -366,13 +426,6 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
             .collect();
         s.last_drop = (0..s.xtcp_flows).map(|_| time::get_time()).collect();
         s.ssthresh = (0..s.xtcp_flows).map(|_| s.cwnd_clamp).collect();
-
-        s.logger.as_ref().map(|log| {
-            info!(log, "[nimbus] starting";
-                "use_switching" => s.use_switching,
-                "mode" => ?s.flow_mode,
-            );
-        });
 
         //s.cubic_reset(); Careful
         let wt = s.wait_time;
