@@ -933,10 +933,6 @@ impl<T: Ipc> Nimbus<T> {
                         * (0.5 + (phase - up_ratio) * (0.5 / (1.0 - up_ratio))))
                         .sin();
             return r;
-            //return match self.loss_mode {
-            //    LossMode::Bundle => r * 6.,
-            //    _ => r,
-            //};
         }
     }
 
