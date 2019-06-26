@@ -575,6 +575,8 @@ impl<T: Ipc> Nimbus<T> {
         let alpha = self.bundler_qlen_alpha;
         let beta = self.bundler_qlen_beta;
 
+        // adjusted target
+        //
         //let elapsed = (time::get_time() - self.start_time).num_milliseconds() as f64 * 0.001;
         //let mut phase = elapsed * self.frequency;
         //phase -= phase.floor();
@@ -600,6 +602,8 @@ impl<T: Ipc> Nimbus<T> {
         //            * (1. / 1500.)
         //            * (1. - ((t * std::f64::consts::PI / 150.).cos()))
         //};
+        //
+        // without adjusted target
         let adj_target = self.bundler_qlen_target;
 
         self.bundler_qlen_factor = adj_target;
@@ -608,7 +612,9 @@ impl<T: Ipc> Nimbus<T> {
             + alpha * (qlen - adj_target)
             + beta * ((qlen - adj_target) - self.bundler_last_qlen);
 
+        // with ewma
         self.rate = 0.98 * self.rate + 0.02 * self.bundler_clamp_rate;
+        // without ewma
         //self.rate = self.bundler_clamp_rate;
 
         self.bundler_last_qlen = qlen - adj_target;
