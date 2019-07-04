@@ -103,7 +103,7 @@ pub struct NimbusConfig {
     #[structopt(long = "switching_thresh", default_value = "0.4")]
     pub switching_thresh: f64,
 
-    #[structopt(long = "uest", default_value = "96.0")]
+    #[structopt(long = "uest", default_value = "12000000.0")]
     pub uest: f64,
 
     #[structopt(long = "flow_mode", default_value = "XTCP")]
