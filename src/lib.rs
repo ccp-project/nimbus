@@ -555,7 +555,7 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
                 "zt" => zt * 8.0,
                 "rtt" => rtt_seconds,
                 "uest" => self.uest * 8.0,
-                "qlen" => self.bundler_ewma_qlen,
+                "qlen" => qlen, //self.bundler_ewma_qlen,
                 "qlen_factor" => self.bundler_qlen_factor,
                 "elapsed" => elapsed,
             );
