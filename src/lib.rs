@@ -526,14 +526,16 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
 
         self.rate = self.rate.max(0.05 * self.uest);
 
-        if self.master_mode {
-            self.rate = self.elasticity_est_pulse().max(0.05 * self.uest);
-        }
-
+        // NOTE: this was previously below pulse creation, which was overwriting the pulses
         // controller to keep some queue at inbox
         if let FlowMode::XTCP = self.flow_mode {
             self.control_inbox_queue(qlen);
         }
+
+        if self.master_mode {
+            self.rate = self.elasticity_est_pulse().max(0.05 * self.uest);
+        }
+
         self.rate = self.rate.max(0.05 * self.uest);
 
         self.send_pattern(self.rate, self.wait_time);
