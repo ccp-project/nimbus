@@ -81,7 +81,7 @@ pub struct NimbusConfig {
     #[structopt(long = "use_switching")]
     pub use_switching: bool,
 
-    #[structopt(long = "no_bw_est_mode")]
+    #[structopt(long = "bw_est_mode")]
     pub bw_est_mode: bool,
 
     #[structopt(long = "use_ewma")]
@@ -348,7 +348,7 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
             mss: info.mss,
 
             use_switching: cfg.config.use_switching,
-            bw_est_mode: !cfg.config.bw_est_mode, // default to true
+            bw_est_mode: cfg.config.bw_est_mode, // default to true
             delay_threshold: cfg.config.delay_threshold,
             xtcp_flows: cfg.config.xtcp_flows as i32,
             init_delay_threshold: cfg.config.init_delay_threshold,
