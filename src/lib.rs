@@ -615,9 +615,9 @@ impl<T: Ipc> Nimbus<T> {
             + beta * ((qlen - adj_target) - self.bundler_last_qlen);
 
         // with ewma
-        self.rate = 0.98 * self.rate + 0.02 * self.bundler_clamp_rate;
+        // self.rate = 0.98 * self.rate + 0.02 * self.bundler_clamp_rate;
         // without ewma
-        //self.rate = self.bundler_clamp_rate;
+        self.rate = self.bundler_clamp_rate;
 
         self.bundler_last_qlen = qlen - adj_target;
     }
