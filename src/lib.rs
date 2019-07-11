@@ -520,7 +520,7 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
             }
             FlowMode::XTCP => {
                 self.frequency = 5.0f64;
-                self.update_rate_loss(acked as u64);
+                self.update_rate_loss(acked as u64, qlen);
             }
         }
 
@@ -528,9 +528,10 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
 
         // NOTE: this was previously below pulse creation, which was overwriting the pulses
         // controller to keep some queue at inbox
-        if let FlowMode::XTCP = self.flow_mode {
-            self.control_inbox_queue(qlen);
-        }
+        // Moving inside of update_rate_loss
+        //if let FlowMode::XTCP = self.flow_mode {
+        //    self.control_inbox_queue(qlen);
+        //}
 
         if self.master_mode {
             self.rate = self.elasticity_est_pulse().max(0.05 * self.uest);
@@ -807,21 +808,23 @@ impl<T: Ipc> Nimbus<T> {
     //    self.ack_cnt = 0.0;
     //}
 
-    fn update_rate_loss(&mut self, new_bytes_acked: u64) {
+    fn update_rate_loss(&mut self, new_bytes_acked: u64, qlen: u32) {
         match self.loss_mode {
             LossMode::Cubic => self.update_rate_cubic(new_bytes_acked),
             LossMode::MulTCP => self.update_rate_mul_tcp(new_bytes_acked),
-            LossMode::Bundle => {
-                // the offered load will naturally match the fair share
-                // so just get out of the way
-                // pulsing is still needed to cut delays when appropriate
+            LossMode::Bundle => self.control_inbox_queue(qlen),
+            //{
+            // the offered load will naturally match the fair share
+            // so just get out of the way
+            // pulsing is still needed to cut delays when appropriate
+            //
 
-                //self.rate = 1.25 * self.ewma_rout;
-                //self.rate = self.bundler_clamp_rate;
-                //self.rate = self.ewma_rout + self.uest / 4.;
-                //self.rate = self.uest / 2.;
-                //self.ewma_rate = self.rate;
-            }
+            //self.rate = 1.25 * self.ewma_rout;
+            //self.rate = self.bundler_clamp_rate;
+            //self.rate = self.ewma_rout + self.uest / 4.;
+            //self.rate = self.uest / 2.;
+            //self.ewma_rate = self.rate;
+            //}
         }
     }
 
@@ -986,7 +989,8 @@ impl<T: Ipc> Nimbus<T> {
         self.velocity = 1.0;
         self.cur_direction = 0.0;
         self.prev_direction = 0.0;
-        self.update_rate_loss(0);
+        //TODO WHY IS THIS HERE
+        //self.update_rate_loss(0, 0);
     }
 
     fn switch_to_xtcp(&mut self, _rtt: time::Duration) {
@@ -1029,7 +1033,9 @@ impl<T: Ipc> Nimbus<T> {
                     self.ssthresh[i as usize] = self.cwnd[i as usize];
                 }
             }
-            LossMode::Bundle => {}
+            LossMode::Bundle => {
+                self.bundler_clamp_rate = self.rate;
+            }
         };
 
         self.last_switch_time = time::get_time();
