@@ -342,7 +342,7 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
             last_update: time::get_time(),
             rtt: time::Duration::milliseconds(300),
             ewma_rtt: 0.1f64,
-            start_time: time::get_time(),
+            start_time: time::Timespec::new(0, 0),
             ssthresh: vec![],
             cwnd_clamp: 2e6 * 1448.0,
 
@@ -441,6 +441,9 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
         }
 
         self.pkts_in_last_rtt = acked as f64 / self.mss as f64;
+        if self.start_time.sec == 0 {
+            self.start_time = time::get_time();
+        }
         let now = time::get_time();
         let elapsed = (now - self.start_time).num_milliseconds() as f64 * 1e-3;
         //let mut  float_rin = rin as f64;
