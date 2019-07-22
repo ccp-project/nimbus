@@ -81,6 +81,9 @@ pub struct NimbusConfig {
     #[structopt(long = "use_switching")]
     pub use_switching: bool,
 
+    #[structopt(long = "pass_through")]
+    pub pass_through: bool,
+
     #[structopt(long = "bw_est_mode")]
     pub bw_est_mode: bool,
 
@@ -221,6 +224,7 @@ pub struct Nimbus<T: Ipc> {
     cur_direction: f64,
     prev_direction: f64,
     prev_update_rtt: time::Timespec,
+    pass_through: bool,
 }
 
 impl<T: Ipc> Nimbus<T> {
@@ -337,6 +341,7 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
                 "delay_mode" => ?cfg.config.delay_mode ,
                 "loss_mode" => ?cfg.config.loss_mode,
                 "xtcp_flows" => ?cfg.config.xtcp_flows,
+                "pass_through" => ?cfg.config.pass_through,
             );
         });
 
@@ -360,6 +365,7 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
             loss_mode: cfg.config.loss_mode,
             uest: cfg.config.uest,
             use_ewma: cfg.config.use_ewma,
+            pass_through: cfg.config.pass_through,
             //set_win_cap:  cfg.config.set_win_cap_arg,
             base_rtt: -0.001f64, // careful
             last_drop: vec![],
@@ -572,6 +578,11 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
 
 impl<T: Ipc> Nimbus<T> {
     fn control_inbox_queue(&mut self, qlen: u32) {
+        if self.pass_through {
+            self.rate = 1.25 * self.ewma_rout;
+            return;
+        }
+
         let qlen = qlen as f64;
 
         //self.bundler_ewma_qlen = 0.98 * self.bundler_ewma_qlen + 0.02 * qlen;
