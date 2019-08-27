@@ -777,8 +777,9 @@ impl<T: Ipc> Nimbus<T> {
                     } else {
                         self.velocity = 1.0;
                     }
-                    if self.velocity > 100000.0 {
-                        self.velocity = 100000.0;
+                    if self.velocity > 32.0 {
+                        // TODO somewhere around 50
+                        self.velocity = 32.0;
                     }
                     self.prev_direction = self.cur_direction;
                     self.cur_direction = 0.0;
