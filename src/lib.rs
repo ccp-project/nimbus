@@ -14,8 +14,8 @@ use portus::ipc::Ipc;
 use portus::lang::Scope;
 use portus::{Config, CongAlg, Datapath, DatapathInfo, DatapathTrait, Report};
 use rand::{distributions::Uniform, thread_rng, Rng, ThreadRng};
-use rustfft::FFT;
 use structopt::StructOpt;
+use rustfft::FFTplanner;
 
 #[derive(Clone, Copy, Debug)]
 pub enum FlowMode {
@@ -974,13 +974,17 @@ impl<T: Ipc> Nimbus<T> {
         clean_zt = self.detrend(clean_zt);
         clean_zout = self.detrend(clean_zout);
 
-        let mut fft_zt_temp = FFT::new(clean_zt.len(), false);
+        //let mut fft_zt_temp = FFT::new(clean_zt.len(), false);
+        let mut fft_zt_temp_plan = FFTplanner::new(false);
+        let fft_zt_temp = fft_zt_temp_plan.plan_fft(clean_zt.len());
         let mut fft_zt = clean_zt.clone();
-        fft_zt_temp.process(&clean_zt[..], &mut fft_zt[..]);
+        fft_zt_temp.process(&mut clean_zt[..], &mut fft_zt[..]);
 
-        let mut fft_zout_temp = FFT::new(clean_zout.len(), false);
+        //let mut fft_zout_temp = FFT::new(clean_zout.len(), false);
+        let mut fft_zout_temp_plan = FFTplanner::new(false);
+        let fft_zout_temp = fft_zout_temp_plan.plan_fft(clean_zout.len());
         let mut fft_zout = clean_zout.clone();
-        fft_zout_temp.process(&clean_zout[..], &mut fft_zout[..]);
+        fft_zout_temp.process(&mut clean_zout[..], &mut fft_zout[..]);
 
         let mut freq: Vec<f64> = Vec::new();
         for i in 0..((n / 2) as usize) {
