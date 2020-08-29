@@ -621,14 +621,10 @@ impl<T: Ipc> Nimbus<T> {
                 for i in 0..self.xtcp_flows {
                     total_cwnd += self.cwnd[i as usize];
                 }
-                self.base_rtt = 0.05; // careful
-                let in_queue = total_cwnd * ((curr_rtt - 0.05) / curr_rtt);
 
-                if self.ewma_rtt < 1.05 * self.base_rtt && curr_rtt < 1.05 * self.base_rtt {
-                    self.cwnd[0] += 0.1 * new_bytes_acked as f64;
-                } else if in_queue < 30.0 * self.mss as f64 {
+                if self.ewma_rtt < (1.0 * self.base_rtt + 0.15) {
                     self.cwnd[0] += self.mss as f64 * (new_bytes_acked as f64 / total_cwnd);
-                } else if in_queue > 40.0 * self.mss as f64 {
+                } else {
                     self.cwnd[0] -= self.mss as f64 * (new_bytes_acked as f64 / total_cwnd);
                 }
 
