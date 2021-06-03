@@ -8,26 +8,22 @@ use structopt::StructOpt;
 fn main() {
     let log = portus::algs::make_logger();
     let cfg = NimbusConfig::from_args();
+    let ipc = cfg.ipc.clone();
+    let mut nimbus: Nimbus = cfg.into();
+    nimbus.with_logger(log.clone());
 
-    info!(log, "starting CCP";
+    info!(&log, "starting CCP";
         "algorithm" => "NIMBUS",
-        "ipc" => cfg.ipc.clone(),
+        "ipc" => ?&ipc,
     );
 
-    match cfg.ipc.as_str() {
+    match ipc.as_str() {
         "unix" => {
             use portus::ipc::unix::Socket;
             let b = Socket::<Blocking>::new("in", "out")
                 .map(|sk| BackendBuilder { sock: sk })
                 .expect("ipc initialization");
-            portus::run::<_, Nimbus<_>>(
-                b,
-                &portus::Config {
-                    logger: Some(log),
-                    config: cfg,
-                },
-            )
-            .unwrap();
+            portus::run(b, portus::Config { logger: Some(log) }, nimbus).unwrap();
         }
         #[cfg(all(target_os = "linux"))]
         "netlink" => {
@@ -35,14 +31,7 @@ fn main() {
             let b = Socket::<Blocking>::new()
                 .map(|sk| BackendBuilder { sock: sk })
                 .expect("ipc initialization");
-            portus::run::<_, Nimbus<_>>(
-                b,
-                &portus::Config {
-                    logger: Some(log),
-                    config: cfg,
-                },
-            )
-            .unwrap();
+            portus::run(b, portus::Config { logger: Some(log) }, nimbus).unwrap();
         }
         #[cfg(all(target_os = "linux"))]
         "char" => {
@@ -50,14 +39,7 @@ fn main() {
             let b = Socket::<Blocking>::new()
                 .map(|sk| BackendBuilder { sock: sk })
                 .expect("char initialization");
-            portus::run::<_, Nimbus<_>>(
-                b,
-                &portus::Config {
-                    logger: Some(log),
-                    config: cfg,
-                },
-            )
-            .unwrap()
+            portus::run(b, portus::Config { logger: Some(log) }, nimbus).unwrap()
         }
         _ => unreachable!(),
     }

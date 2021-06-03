@@ -5,9 +5,10 @@ use anyhow::bail;
 use num_complex::Complex;
 use portus::ipc::Ipc;
 use portus::lang::Scope;
-use portus::{Config, CongAlg, Datapath, DatapathInfo, DatapathTrait, Report};
+use portus::{CongAlg, Datapath, DatapathInfo, DatapathTrait, Flow, Report};
 use rand::{distributions::Uniform, thread_rng, Rng, ThreadRng};
 use rustfft::FFTplanner;
+use std::collections::HashMap;
 use structopt::StructOpt;
 
 #[derive(Clone, Copy, Debug)]
@@ -112,7 +113,196 @@ pub struct NimbusConfig {
     pub xtcp_flows: usize,
 }
 
-pub struct Nimbus<T: Ipc> {
+#[derive(Debug, Clone)]
+pub struct Nimbus {
+    cfg: NimbusConfig,
+    logger: Option<slog::Logger>,
+}
+
+impl From<NimbusConfig> for Nimbus {
+    fn from(cfg: NimbusConfig) -> Self {
+        Self { cfg, logger: None }
+    }
+}
+
+impl Nimbus {
+    pub fn with_logger(&mut self, log: slog::Logger) -> &mut Self {
+        self.logger = Some(log);
+        self
+    }
+}
+
+impl<T: Ipc> CongAlg<T> for Nimbus {
+    type Flow = NimbusFlow<T>;
+
+    fn name() -> &'static str {
+        "nimbus"
+    }
+
+    fn datapath_programs(&self) -> HashMap<&'static str, String> {
+        std::iter::once((
+            "nimbus_program",
+            String::from(
+                "
+                (def 
+                    (Report
+                        (volatile acked 0)
+                        (volatile rtt 0)
+                        (volatile loss 0)
+                        (volatile rin 0)
+                        (volatile rout 0)
+                        (volatile timeout false)
+                    )
+                    (report_time 0)
+                )
+                (when true
+                    (:= Report.acked (+ Report.acked Ack.bytes_acked))
+                    (:= Report.rtt Flow.rtt_sample_us)
+                    (:= Report.rin Flow.rate_outgoing)
+                    (:= Report.rout Flow.rate_incoming)
+                    (:= Report.loss Ack.lost_pkts_sample)
+                    (:= Report.timeout Flow.was_timeout)
+                    (fallthrough)
+                )
+                (when (|| Report.timeout (> Report.loss 0))
+                    (report)
+                    (:= Micros 0)
+                )
+                (when (> Micros report_time)
+                    (report)
+                    (:= Micros 0)
+                )
+            ",
+            ),
+        ))
+        .collect()
+    }
+
+    fn new_flow(&self, control: Datapath<T>, info: DatapathInfo) -> Self::Flow {
+        self.logger.as_ref().map(|log| {
+            info!(log, "[nimbus] starting";
+                "ipc" => ?self.cfg.ipc,
+                "use_switching" => ?self.cfg.use_switching,
+                "bw_est_mode" => ?self.cfg.bw_est_mode ,
+                "use_ewma" => ?self.cfg.use_ewma ,
+                "set_win_cap" => ?self.cfg.set_win_cap ,
+                "delay_threshold" => ?self.cfg.delay_threshold ,
+                "init_delay_threshold" => ?self.cfg.init_delay_threshold ,
+                "pulse_size" => ?self.cfg.pulse_size ,
+                "frequency" => ?self.cfg.frequency ,
+                "switching_thresh" => ?self.cfg.switching_thresh,
+                "uest" => ?self.cfg.uest ,
+                "flow_mode" => ?self.cfg.flow_mode ,
+                "delay_mode" => ?self.cfg.delay_mode ,
+                "loss_mode" => ?self.cfg.loss_mode,
+                "xtcp_flows" => ?self.cfg.xtcp_flows,
+            );
+        });
+
+        let mut s = NimbusFlow {
+            sock_id: info.sock_id,
+            control_channel: control,
+            sc: Default::default(),
+            logger: self.logger.clone(),
+            mss: info.mss,
+
+            use_switching: self.cfg.use_switching,
+            bw_est_mode: self.cfg.bw_est_mode, // default to true
+            delay_threshold: self.cfg.delay_threshold,
+            xtcp_flows: self.cfg.xtcp_flows as i32,
+            init_delay_threshold: self.cfg.init_delay_threshold,
+            frequency: self.cfg.frequency,
+            pulse_size: self.cfg.pulse_size,
+            //switching_thresh: self.cfg.switching_thresh,
+            flow_mode: self.cfg.flow_mode,
+            delay_mode: self.cfg.delay_mode,
+            loss_mode: self.cfg.loss_mode,
+            uest: self.cfg.uest,
+            use_ewma: self.cfg.use_ewma,
+            //set_win_cap:  self.cfg.set_win_cap_arg,
+            base_rtt: -0.001f64, // careful
+            last_drop: vec![],
+            last_update: time::get_time(),
+            rtt: time::Duration::milliseconds(300),
+            ewma_rtt: 0.1f64,
+            start_time: time::Timespec::new(0, 0),
+            ssthresh: vec![],
+            cwnd_clamp: 2e6 * 1448.0,
+
+            alpha: 0.8f64,
+            beta: 0.5f64,
+            rate: 100000f64,
+            ewma_rate: 10000f64,
+            cwnd: vec![],
+
+            zout_history: vec![],
+            zt_history: vec![],
+            rtt_history: vec![],
+            measurement_interval: time::Duration::milliseconds(10),
+            last_hist_update: time::get_time(),
+            last_switch_time: time::get_time(),
+            ewma_elasticity: 1.0f64,
+            ewma_slave: 1.0f64,
+            ewma_master: 1.0f64,
+            ewma_alpha: 0.01f64,
+
+            //last_bw_est: time::get_time(),
+            //index_bw_est: vec![],
+            rin_history: vec![],
+            rout_history: vec![],
+            agg_last_drop: time::get_time(),
+            max_rout: 0.0f64,
+            ewma_rin: 0.0f64,
+            ewma_rout: 0.0f64,
+
+            wait_time: time::Duration::milliseconds(5),
+
+            master_mode: true,
+            switching_master: false,
+            r: thread_rng(),
+            //last_slave_mode: time::get_time(),
+
+            //cubic_init_cwnd: 10f64,
+            cubic_cwnd: 10f64,
+            cubic_ssthresh: ((0x7fffffff as f64) / 1448.0),
+            cwnd_cnt: 0f64,
+            tcp_friendliness: true,
+            cubic_beta: 0.3f64,
+            fast_convergence: true,
+            c: 0.4f64,
+
+            pkts_in_last_rtt: 0f64,
+            velocity: 1f64,
+            cur_direction: 0f64,
+            prev_direction: 0f64,
+            prev_update_rtt: time::get_time(),
+
+            wlast_max: 0f64,
+            epoch_start: -0.0001f64,
+            origin_point: 0f64,
+            d_min: -0.0001f64,
+            wtcp: 0f64,
+            k: 0f64,
+            ack_cnt: 0f64,
+            cnt: 0f64,
+        };
+
+        s.cwnd = (0..s.xtcp_flows)
+            .map(|_| s.rate / (s.xtcp_flows as f64))
+            .collect();
+        s.last_drop = (0..s.xtcp_flows).map(|_| time::get_time()).collect();
+        s.ssthresh = (0..s.xtcp_flows).map(|_| s.cwnd_clamp).collect();
+
+        //s.cubic_reset(); Careful
+        let wt = s.wait_time;
+        s.sc = s.install(wt);
+        s.send_pattern(s.rate, wt);
+
+        s
+    }
+}
+
+pub struct NimbusFlow<T: Ipc> {
     control_channel: Datapath<T>,
     logger: Option<slog::Logger>,
     sc: Scope,
@@ -197,220 +387,7 @@ pub struct Nimbus<T: Ipc> {
     prev_update_rtt: time::Timespec,
 }
 
-impl<T: Ipc> Nimbus<T> {
-    fn send_pattern(&self, mut rate: f64, _wait_time: time::Duration) {
-        if (time::get_time() - self.start_time).num_seconds() < 1 {
-            rate = 2_000_000.0;
-        }
-
-        let win = (self.mss as f64).max(rate * 2.0 * (self.rtt.num_milliseconds() as f64) * 0.001);
-        self.control_channel
-            .update_field(&self.sc, &[("Rate", rate as u32), ("Cwnd", win as u32)])
-            .unwrap_or_else(|_| ());
-    }
-
-    fn install(&mut self, wait_time: time::Duration) -> Scope {
-        self.control_channel
-            .set_program(
-                String::from("nimbus_program"),
-                Some(&[("report_time", wait_time.num_microseconds().unwrap() as u32)][..]),
-            )
-            .unwrap()
-    }
-
-    fn get_fields(&mut self, m: &Report) -> Option<(u32, u32, f64, f64, u32, bool)> {
-        let sc = &self.sc;
-        let acked = m
-            .get_field("Report.acked", sc)
-            .expect("expected acked field in returned measurement") as u32;
-        let rtt = m
-            .get_field("Report.rtt", sc)
-            .expect("expected rtt field in returned measurement") as u32;
-        let rin = m
-            .get_field("Report.rin", sc)
-            .expect("expected rin field in returned measurement") as f64;
-        let rout = m
-            .get_field("Report.rout", sc)
-            .expect("expected rout field in returned measurement") as f64;
-        let loss = m
-            .get_field("Report.loss", sc)
-            .expect("expected loss field in returned measurement") as u32;
-        let was_timeout = m
-            .get_field("Report.timeout", sc)
-            .expect("expected timeout field in returned measurement")
-            == 1;
-        Some((acked, rtt, rin, rout, loss, was_timeout))
-    }
-}
-
-impl<T: Ipc> CongAlg<T> for Nimbus<T> {
-    type Config = NimbusConfig;
-
-    fn name() -> String {
-        String::from("nimbus")
-    }
-
-    fn init_programs(_cfg: Config<T, Self>) -> Vec<(String, String)> {
-        vec![(
-            String::from("nimbus_program"),
-            String::from(
-                "
-                (def 
-                    (Report
-                        (volatile acked 0)
-                        (volatile rtt 0)
-                        (volatile loss 0)
-                        (volatile rin 0)
-                        (volatile rout 0)
-                        (volatile timeout false)
-                    )
-                    (report_time 0)
-                )
-                (when true
-                    (:= Report.acked (+ Report.acked Ack.bytes_acked))
-                    (:= Report.rtt Flow.rtt_sample_us)
-                    (:= Report.rin Flow.rate_outgoing)
-                    (:= Report.rout Flow.rate_incoming)
-                    (:= Report.loss Ack.lost_pkts_sample)
-                    (:= Report.timeout Flow.was_timeout)
-                    (fallthrough)
-                )
-                (when (|| Report.timeout (> Report.loss 0))
-                    (report)
-                    (:= Micros 0)
-                )
-                (when (> Micros report_time)
-                    (report)
-                    (:= Micros 0)
-                )
-            ",
-            ),
-        )]
-    }
-
-    fn create(control: Datapath<T>, cfg: Config<T, Nimbus<T>>, info: DatapathInfo) -> Self {
-        cfg.logger.as_ref().map(|log| {
-            info!(log, "[nimbus] starting";
-                "ipc" => ?cfg.config.ipc,
-                "use_switching" => ?cfg.config.use_switching,
-                "bw_est_mode" => ?cfg.config.bw_est_mode ,
-                "use_ewma" => ?cfg.config.use_ewma ,
-                "set_win_cap" => ?cfg.config.set_win_cap ,
-                "delay_threshold" => ?cfg.config.delay_threshold ,
-                "init_delay_threshold" => ?cfg.config.init_delay_threshold ,
-                "pulse_size" => ?cfg.config.pulse_size ,
-                "frequency" => ?cfg.config.frequency ,
-                "switching_thresh" => ?cfg.config.switching_thresh,
-                "uest" => ?cfg.config.uest ,
-                "flow_mode" => ?cfg.config.flow_mode ,
-                "delay_mode" => ?cfg.config.delay_mode ,
-                "loss_mode" => ?cfg.config.loss_mode,
-                "xtcp_flows" => ?cfg.config.xtcp_flows,
-            );
-        });
-
-        let mut s = Self {
-            sock_id: info.sock_id,
-            control_channel: control,
-            sc: Default::default(),
-            logger: cfg.logger,
-            mss: info.mss,
-
-            use_switching: cfg.config.use_switching,
-            bw_est_mode: cfg.config.bw_est_mode, // default to true
-            delay_threshold: cfg.config.delay_threshold,
-            xtcp_flows: cfg.config.xtcp_flows as i32,
-            init_delay_threshold: cfg.config.init_delay_threshold,
-            frequency: cfg.config.frequency,
-            pulse_size: cfg.config.pulse_size,
-            //switching_thresh: cfg.config.switching_thresh,
-            flow_mode: cfg.config.flow_mode,
-            delay_mode: cfg.config.delay_mode,
-            loss_mode: cfg.config.loss_mode,
-            uest: cfg.config.uest,
-            use_ewma: cfg.config.use_ewma,
-            //set_win_cap:  cfg.config.set_win_cap_arg,
-            base_rtt: -0.001f64, // careful
-            last_drop: vec![],
-            last_update: time::get_time(),
-            rtt: time::Duration::milliseconds(300),
-            ewma_rtt: 0.1f64,
-            start_time: time::Timespec::new(0, 0),
-            ssthresh: vec![],
-            cwnd_clamp: 2e6 * 1448.0,
-
-            alpha: 0.8f64,
-            beta: 0.5f64,
-            rate: 100000f64,
-            ewma_rate: 10000f64,
-            cwnd: vec![],
-
-            zout_history: vec![],
-            zt_history: vec![],
-            rtt_history: vec![],
-            measurement_interval: time::Duration::milliseconds(10),
-            last_hist_update: time::get_time(),
-            last_switch_time: time::get_time(),
-            ewma_elasticity: 1.0f64,
-            ewma_slave: 1.0f64,
-            ewma_master: 1.0f64,
-            ewma_alpha: 0.01f64,
-
-            //last_bw_est: time::get_time(),
-            //index_bw_est: vec![],
-            rin_history: vec![],
-            rout_history: vec![],
-            agg_last_drop: time::get_time(),
-            max_rout: 0.0f64,
-            ewma_rin: 0.0f64,
-            ewma_rout: 0.0f64,
-
-            wait_time: time::Duration::milliseconds(5),
-
-            master_mode: true,
-            switching_master: false,
-            r: thread_rng(),
-            //last_slave_mode: time::get_time(),
-
-            //cubic_init_cwnd: 10f64,
-            cubic_cwnd: 10f64,
-            cubic_ssthresh: ((0x7fffffff as f64) / 1448.0),
-            cwnd_cnt: 0f64,
-            tcp_friendliness: true,
-            cubic_beta: 0.3f64,
-            fast_convergence: true,
-            c: 0.4f64,
-
-            pkts_in_last_rtt: 0f64,
-            velocity: 1f64,
-            cur_direction: 0f64,
-            prev_direction: 0f64,
-            prev_update_rtt: time::get_time(),
-
-            wlast_max: 0f64,
-            epoch_start: -0.0001f64,
-            origin_point: 0f64,
-            d_min: -0.0001f64,
-            wtcp: 0f64,
-            k: 0f64,
-            ack_cnt: 0f64,
-            cnt: 0f64,
-        };
-
-        s.cwnd = (0..s.xtcp_flows)
-            .map(|_| s.rate / (s.xtcp_flows as f64))
-            .collect();
-        s.last_drop = (0..s.xtcp_flows).map(|_| time::get_time()).collect();
-        s.ssthresh = (0..s.xtcp_flows).map(|_| s.cwnd_clamp).collect();
-
-        //s.cubic_reset(); Careful
-        let wt = s.wait_time;
-        s.sc = s.install(wt);
-        s.send_pattern(s.rate, wt);
-
-        s
-    }
-
+impl<T: Ipc> Flow for NimbusFlow<T> {
     fn on_report(&mut self, _sock_id: u32, m: Report) {
         let (acked, rtt_us, mut rin, mut rout, loss, was_timeout) = self.get_fields(&m).unwrap();
 
@@ -515,7 +492,51 @@ impl<T: Ipc> CongAlg<T> for Nimbus<T> {
     }
 }
 
-impl<T: Ipc> Nimbus<T> {
+impl<T: Ipc> NimbusFlow<T> {
+    fn send_pattern(&self, mut rate: f64, _wait_time: time::Duration) {
+        if (time::get_time() - self.start_time).num_seconds() < 1 {
+            rate = 2_000_000.0;
+        }
+
+        let win = (self.mss as f64).max(rate * 2.0 * (self.rtt.num_milliseconds() as f64) * 0.001);
+        self.control_channel
+            .update_field(&self.sc, &[("Rate", rate as u32), ("Cwnd", win as u32)])
+            .unwrap_or_else(|_| ());
+    }
+
+    fn install(&mut self, wait_time: time::Duration) -> Scope {
+        self.control_channel
+            .set_program(
+                "nimbus_program",
+                Some(&[("report_time", wait_time.num_microseconds().unwrap() as u32)][..]),
+            )
+            .unwrap()
+    }
+
+    fn get_fields(&mut self, m: &Report) -> Option<(u32, u32, f64, f64, u32, bool)> {
+        let sc = &self.sc;
+        let acked = m
+            .get_field("Report.acked", sc)
+            .expect("expected acked field in returned measurement") as u32;
+        let rtt = m
+            .get_field("Report.rtt", sc)
+            .expect("expected rtt field in returned measurement") as u32;
+        let rin = m
+            .get_field("Report.rin", sc)
+            .expect("expected rin field in returned measurement") as f64;
+        let rout = m
+            .get_field("Report.rout", sc)
+            .expect("expected rout field in returned measurement") as f64;
+        let loss = m
+            .get_field("Report.loss", sc)
+            .expect("expected loss field in returned measurement") as u32;
+        let was_timeout = m
+            .get_field("Report.timeout", sc)
+            .expect("expected timeout field in returned measurement")
+            == 1;
+        Some((acked, rtt, rin, rout, loss, was_timeout))
+    }
+
     fn handle_drop(&mut self) {
         match self.loss_mode {
             LossMode::Cubic => self.cubic_drop(),
