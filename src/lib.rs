@@ -1,21 +1,14 @@
 #[macro_use]
 extern crate slog;
-extern crate failure;
-extern crate num_complex;
-extern crate portus;
-extern crate rand;
-extern crate rustfft;
-extern crate structopt;
-extern crate time;
 
-use failure::bail;
+use anyhow::bail;
 use num_complex::Complex;
 use portus::ipc::Ipc;
 use portus::lang::Scope;
 use portus::{Config, CongAlg, Datapath, DatapathInfo, DatapathTrait, Report};
 use rand::{distributions::Uniform, thread_rng, Rng, ThreadRng};
-use structopt::StructOpt;
 use rustfft::FFTplanner;
+use structopt::StructOpt;
 
 #[derive(Clone, Copy, Debug)]
 pub enum FlowMode {
@@ -24,7 +17,7 @@ pub enum FlowMode {
 }
 
 impl std::str::FromStr for FlowMode {
-    type Err = failure::Error;
+    type Err = anyhow::Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "XTCP" => Ok(FlowMode::XTCP),
@@ -42,7 +35,7 @@ pub enum DelayMode {
 }
 
 impl std::str::FromStr for DelayMode {
-    type Err = failure::Error;
+    type Err = anyhow::Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "Copa" => Ok(DelayMode::Copa),
@@ -60,7 +53,7 @@ pub enum LossMode {
 }
 
 impl std::str::FromStr for LossMode {
-    type Err = failure::Error;
+    type Err = anyhow::Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "Cubic" => Ok(LossMode::Cubic),
