@@ -5,6 +5,9 @@ use ccp_nimbus::{Nimbus, NimbusConfig};
 use portus::ipc::{BackendBuilder, Blocking};
 use structopt::StructOpt;
 
+use portus::ipc::unix::Socket as S;
+use portus::ipc::Blocking as B;
+
 fn main() {
     let log = portus::algs::make_logger();
     let cfg = NimbusConfig::from_args();
@@ -17,30 +20,12 @@ fn main() {
         "ipc" => ?&ipc,
     );
 
-    match ipc.as_str() {
-        "unix" => {
-            use portus::ipc::unix::Socket;
-            let b = Socket::<Blocking>::new("in", "out")
-                .map(|sk| BackendBuilder { sock: sk })
-                .expect("ipc initialization");
-            portus::run(b, portus::Config { logger: Some(log) }, nimbus).unwrap();
-        }
-        #[cfg(all(target_os = "linux"))]
-        "netlink" => {
-            use portus::ipc::netlink::Socket;
-            let b = Socket::<Blocking>::new()
-                .map(|sk| BackendBuilder { sock: sk })
-                .expect("ipc initialization");
-            portus::run(b, portus::Config { logger: Some(log) }, nimbus).unwrap();
-        }
-        #[cfg(all(target_os = "linux"))]
-        "char" => {
-            use portus::ipc::kp::Socket;
-            let b = Socket::<Blocking>::new()
-                .map(|sk| BackendBuilder { sock: sk })
-                .expect("char initialization");
-            portus::run(b, portus::Config { logger: Some(log) }, nimbus).unwrap()
-        }
-        _ => unreachable!(),
-    }
+    let portus_bindaddr = format!("{}/core{}/{}", "1", "0", "portus");
+    let backend = S::<B>::new(&portus_bindaddr, 10485760, 10485760)
+        .map(|sk| portus::ipc::BackendBuilder { sock : sk })
+        .expect("ipc initialization");
+    let rb = portus::RunBuilder::new(backend, portus::Config { logger : Some (log.clone()) })
+       .default_alg(cfg);
+
+    let _ = rb.run();
 }

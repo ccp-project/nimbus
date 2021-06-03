@@ -7,7 +7,7 @@ edition = "2018"
 [dependencies]
 anyhow = "1"
 num-complex="0.2"
-portus = "0.5"
+portus = { git = "https://github.com/ccp-project/portus", branch = "run-multiple-rebased" }
 rand="0.5"
 rustfft="3"
 slog = "2"
