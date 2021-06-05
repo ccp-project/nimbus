@@ -106,10 +106,10 @@ pub struct NimbusConfig {
     #[structopt(long = "delay_mode", default_value = "Nimbus")]
     pub delay_mode: DelayMode,
 
-    #[structopt(long = "loss_mode", default_value = "MulTCP")]
+    #[structopt(long = "loss_mode", default_value = "Cubic")]
     pub loss_mode: LossMode,
 
-    #[structopt(long = "xtcp_flows", default_value = "2")]
+    #[structopt(long = "xtcp_flows", default_value = "1")]
     pub xtcp_flows: usize,
 }
 
