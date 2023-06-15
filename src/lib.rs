@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate slog;
-
 use anyhow::bail;
 use num_complex::Complex;
 use portus::ipc::Ipc;
@@ -11,6 +8,7 @@ use rustfft::FFTplanner;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use structopt::StructOpt;
+use tracing::{debug, info};
 
 #[derive(Clone, Copy, Debug)]
 pub enum FlowMode {
@@ -117,19 +115,11 @@ pub struct NimbusConfig {
 #[derive(Debug, Clone)]
 pub struct Nimbus {
     cfg: NimbusConfig,
-    logger: Option<slog::Logger>,
 }
 
 impl From<NimbusConfig> for Nimbus {
     fn from(cfg: NimbusConfig) -> Self {
-        Self { cfg, logger: None }
-    }
-}
-
-impl Nimbus {
-    pub fn with_logger(&mut self, log: slog::Logger) -> &mut Self {
-        self.logger = Some(log);
-        self
+        Self { cfg }
     }
 }
 
@@ -180,25 +170,24 @@ impl<T: Ipc> CongAlg<T> for Nimbus {
     }
 
     fn new_flow(&self, control: Datapath<T>, info: DatapathInfo) -> Self::Flow {
-        self.logger.as_ref().map(|log| {
-            info!(log, "[nimbus] starting";
-                "ipc" => ?self.cfg.ipc,
-                "use_switching" => ?self.cfg.use_switching,
-                "bw_est_mode" => ?self.cfg.bw_est_mode ,
-                "use_ewma" => ?self.cfg.use_ewma ,
-                "set_win_cap" => ?self.cfg.set_win_cap ,
-                "delay_threshold" => ?self.cfg.delay_threshold ,
-                "init_delay_threshold" => ?self.cfg.init_delay_threshold ,
-                "pulse_size" => ?self.cfg.pulse_size ,
-                "frequency" => ?self.cfg.frequency ,
-                "switching_thresh" => ?self.cfg.switching_thresh,
-                "uest" => ?self.cfg.uest ,
-                "flow_mode" => ?self.cfg.flow_mode ,
-                "delay_mode" => ?self.cfg.delay_mode ,
-                "loss_mode" => ?self.cfg.loss_mode,
-                "xtcp_flows" => ?self.cfg.xtcp_flows,
-            );
-        });
+        info!(
+            ipc = ?self.cfg.ipc,
+            use_switching = ?self.cfg.use_switching,
+            bw_est_mode = ?self.cfg.bw_est_mode ,
+            use_ewma = ?self.cfg.use_ewma ,
+            set_win_cap = ?self.cfg.set_win_cap ,
+            delay_threshold = ?self.cfg.delay_threshold ,
+            init_delay_threshold = ?self.cfg.init_delay_threshold ,
+            pulse_size = ?self.cfg.pulse_size ,
+            frequency = ?self.cfg.frequency ,
+            switching_thresh = ?self.cfg.switching_thresh,
+            uest = ?self.cfg.uest ,
+            flow_mode = ?self.cfg.flow_mode ,
+            delay_mode = ?self.cfg.delay_mode ,
+            loss_mode = ?self.cfg.loss_mode,
+            xtcp_flows = ?self.cfg.xtcp_flows,
+            "[nimbus] starting",
+        );
 
         let now = Instant::now();
 
@@ -206,7 +195,6 @@ impl<T: Ipc> CongAlg<T> for Nimbus {
             sock_id: info.sock_id,
             control_channel: control,
             sc: Default::default(),
-            logger: self.logger.clone(),
             mss: info.mss,
 
             use_switching: self.cfg.use_switching,
@@ -304,7 +292,6 @@ impl<T: Ipc> CongAlg<T> for Nimbus {
 
 pub struct NimbusFlow<T: Ipc> {
     control_channel: Datapath<T>,
-    logger: Option<slog::Logger>,
     sc: Scope,
     sock_id: u32,
     mss: u32,
@@ -466,24 +453,23 @@ impl<T: Ipc> Flow for NimbusFlow<T> {
         self.should_switch_flow_mode();
         self.last_update = Instant::now();
 
-        self.logger.as_ref().map(|log| {
-            debug!(log, "[nimbus] got ack";
-                "ID" => self.sock_id,
-                "base_rtt" => self.base_rtt,
-                "curr_rate" => self.rate * 8.0,
-                "curr_cwnd" => self.cwnd[0],
-                "newly_acked" => acked,
-                "rin" => rin * 8.0,
-                "rout" => rout * 8.0,
-                "ewma_rin" => self.ewma_rin * 8.0,
-                "ewma_rout" => self.ewma_rout * 8.0,
-                "max_ewma_rout" => self.max_rout * 8.0,
-                "zt" => zt * 8.0,
-                "rtt" => rtt_seconds,
-                "uest" => self.uest * 8.0,
-                "elapsed" => elapsed,
-            );
-        });
+        debug!(
+            ID = self.sock_id,
+            base_rtt = self.base_rtt,
+            curr_rate = self.rate * 8.0,
+            curr_cwnd = self.cwnd[0],
+            newly_acked = acked,
+            rin = rin * 8.0,
+            rout = rout * 8.0,
+            ewma_rin = self.ewma_rin * 8.0,
+            ewma_rout = self.ewma_rout * 8.0,
+            max_ewma_rout = self.max_rout * 8.0,
+            zt = zt * 8.0,
+            rtt = rtt_seconds,
+            uest = self.uest * 8.0,
+            elapsed = elapsed,
+            "[nimbus] got ack"
+        );
         //n.last_ack = m.Ack Careful
     }
 }
@@ -560,13 +546,12 @@ impl<T: Ipc> NimbusFlow<T> {
             _ => (),
         };
 
-        self.logger.as_ref().map(|log| {
-            debug!(log, "[nimbus cubic] got drop";
-                "ID" => self.sock_id as u32,
-                "time since last drop" => (now - self.last_drop[0]).as_secs_f64(),
-                "rtt" => ?self.rtt,
-            );
-        });
+        debug!(
+            ID = self.sock_id as u32,
+            time_since_last_drop = (now - self.last_drop[0]).as_secs_f64(),
+            rtt = ?self.rtt,
+            "[nimbus cubic] got drop"
+        );
         self.last_drop[0] = now;
         self.agg_last_drop = now;
     }
@@ -611,14 +596,13 @@ impl<T: Ipc> NimbusFlow<T> {
         //  n.index_bw_est = n.index_bw_est[:len(n.index_bw_est)-1]
         //} // Careful
 
-        self.logger.as_ref().map(|log| {
-            debug!(log, "[nimbus XTCP] got drop";
-                "ID" => self.sock_id as u32,
-                "time since last drop" => ?(now-self.last_drop[0]),
-                "rtt" => ?self.rtt,
-                "xtcflows" => i,
-            );
-        });
+        debug!(
+            ID = self.sock_id as u32,
+            time_since_last_drop = ?(now-self.last_drop[0]),
+            rtt = ?self.rtt,
+            xtcp_flows = i,
+            "[nimbus XTCP] got drop"
+        );
 
         self.last_drop[i as usize] = now;
         self.agg_last_drop = now;
@@ -864,15 +848,14 @@ impl<T: Ipc> NimbusFlow<T> {
             .init_delay_threshold
             .max(rtt.as_secs_f64() / self.base_rtt);
 
-        self.logger.as_ref().map(|log| {
-            debug!(log, "switched mode";
-                "ID" => self.sock_id,
-                "elapsed" => ?self.start_time.unwrap().elapsed(),
-                "from" =>  ?self.flow_mode,
-                "to" => "DELAY",
-                "Delay_theshold" => self.delay_threshold,
-            );
-        });
+        debug!(
+            ID = self.sock_id,
+            elapsed = ?self.start_time.unwrap().elapsed(),
+            from =  ?self.flow_mode,
+            to = "DELAY",
+            Delay_theshold = self.delay_threshold,
+            "switched mode"
+        );
 
         self.flow_mode = FlowMode::Delay;
         self.last_switch_time = now;
@@ -892,14 +875,13 @@ impl<T: Ipc> NimbusFlow<T> {
             _ => (),
         };
 
-        self.logger.as_ref().map(|log| {
-            debug!(log, "switched mode";
-                "ID" => self.sock_id,
-                "elapsed" => ?self.start_time.unwrap().elapsed(),
-                "from" =>  ?self.flow_mode,
-                "to" => "XTCP",
-            );
-        });
+        debug!(
+            ID = self.sock_id,
+            elapsed = ?self.start_time.unwrap().elapsed(),
+            from =  ?self.flow_mode,
+            to = "XTCP",
+            "switched mode"
+        );
 
         self.flow_mode = FlowMode::XTCP;
         self.rate = self.rout_history
@@ -1077,19 +1059,18 @@ impl<T: Ipc> NimbusFlow<T> {
                 self.switch_to_slave();
             }
 
-            self.logger.as_ref().map(|log| {
-                debug!(log, "elasticity_inf";
-                    "ID" => self.sock_id,
-                    "Zout_peak_val" => fft_zout[exp_peak_zout].norm(),
-                    "Zt_peak_val" => fft_zt[exp_peak_zt].norm(),
-                    "elapsed" => ?self.start_time.unwrap().elapsed(),
-                    "Elasticity" => elasticity,
-                    "Elasticity2" => elasticity2,
-                    "EWMAElasticity" => self.ewma_elasticity,
-                    "EWMAMaster" => self.ewma_master,
-                    "Expected Peak" => expected_peak,
-                );
-            });
+            debug!(
+                ID = self.sock_id,
+                Zout_peak_val = fft_zout[exp_peak_zout].norm(),
+                Zt_peak_val = fft_zt[exp_peak_zt].norm(),
+                elapsed = ?self.start_time.unwrap().elapsed(),
+                Elasticity = elasticity,
+                Elasticity2 = elasticity2,
+                EWMAElasticity = self.ewma_elasticity,
+                EWMAMaster = self.ewma_master,
+                Expected_Peak = expected_peak,
+                "elasticity_inf"
+            );
         } else {
             let (exp_peak_zout, _) = self.find_peak(
                 expected_peak - 0.5,
@@ -1133,18 +1114,17 @@ impl<T: Ipc> NimbusFlow<T> {
                 self.switch_to_master()
             }
 
-            self.logger.as_ref().map(|log| {
-                debug!(log, "elasticity_inf";
-                    "ID" => self.sock_id,
-                    "Zout_peak_val" => fft_zout[exp_peak_zout].norm(),
-                    "Zout2Peak_val" => fft_zout[exp_peak_zout2].norm(),
-                    "elapsed" => ?self.start_time.unwrap().elapsed(),
-                    "EWMAElasticity" => self.ewma_elasticity,
-                    "EWMASlave" => self.ewma_slave,
-                    "Expected Peak" => expected_peak,
-                    "Expected Peak2" => expected_peak2,
-                );
-            });
+            debug!(
+                ID = self.sock_id,
+                Zout_peak_val = fft_zout[exp_peak_zout].norm(),
+                Zout2Peak_val = fft_zout[exp_peak_zout2].norm(),
+                elapsed = ?self.start_time.unwrap().elapsed(),
+                EWMAElasticity = self.ewma_elasticity,
+                EWMASlave = self.ewma_slave,
+                Expected_Peak = expected_peak,
+                Expected_Peak2 = expected_peak2,
+                "elasticity_inf"
+            );
         }
     }
 
@@ -1154,14 +1134,13 @@ impl<T: Ipc> NimbusFlow<T> {
         }
 
         if self.r.gen::<f64>() < (0.005 * (self.ewma_rin / self.uest)) {
-            self.logger.as_ref().map(|log| {
-                debug!(log, "Switch To Master";
-                    "ID" => self.sock_id,
-                    "EWMAElasticity" => self.ewma_elasticity,
-                    "elapsed" => ?self.start_time.unwrap().elapsed(),
-                    "EWMASlave" => self.ewma_slave,
-                );
-            });
+            debug!(
+                ID = self.sock_id,
+                EWMAElasticity = self.ewma_elasticity,
+                elapsed = ?self.start_time.unwrap().elapsed(),
+                EWMASlave = self.ewma_slave,
+                "Switch To Master",
+            );
 
             self.master_mode = true;
             //n.ewma_elasticity = 3.0
@@ -1175,14 +1154,13 @@ impl<T: Ipc> NimbusFlow<T> {
         }
 
         if self.r.gen::<f64>() < 0.005 {
-            self.logger.as_ref().map(|log| {
-                debug!(log, "Switch To Slave";
-                    "ID" => self.sock_id,
-                    "EWMAElasticity" => self.ewma_elasticity,
-                    "EWMAMaster" => self.ewma_master,
-                    "elapsed" => ?self.start_time.unwrap().elapsed(),
-                );
-            });
+            debug!(
+                ID = self.sock_id,
+                EWMAElasticity = self.ewma_elasticity,
+                EWMAMaster = self.ewma_master,
+                elapsed = ?self.start_time.unwrap().elapsed(),
+                "Switch To Slave"
+            );
             self.ewma_slave = 0.0;
             self.master_mode = false;
             //n.ewma_elasticity = 3.0
