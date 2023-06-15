@@ -3,8 +3,8 @@ use num_complex::Complex;
 use portus::ipc::Ipc;
 use portus::lang::Scope;
 use portus::{CongAlg, Datapath, DatapathInfo, DatapathTrait, Flow, Report};
-use rand::{distributions::Uniform, thread_rng, Rng, ThreadRng};
-use rustfft::FFTplanner;
+use rand::{distributions::Uniform, rngs::ThreadRng, thread_rng, Rng};
+use rustfft::FftPlanner;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use structopt::StructOpt;
@@ -958,20 +958,15 @@ impl<T: Ipc> NimbusFlow<T> {
         );
         let avg_zt = self.mean_complex(&clean_zt[(0.75 * (clean_zt.len() as f32)) as usize..]);
 
-        clean_zt = self.detrend(clean_zt);
-        clean_zout = self.detrend(clean_zout);
+        let mut fft_zt = self.detrend(clean_zt);
+        let mut fft_zt_temp_plan = FftPlanner::new();
+        let fft_zt_temp = fft_zt_temp_plan.plan_fft_forward(fft_zt.len());
+        fft_zt_temp.process(&mut fft_zt[..]);
 
-        //let mut fft_zt_temp = FFT::new(clean_zt.len(), false);
-        let mut fft_zt_temp_plan = FFTplanner::new(false);
-        let fft_zt_temp = fft_zt_temp_plan.plan_fft(clean_zt.len());
-        let mut fft_zt = clean_zt.clone();
-        fft_zt_temp.process(&mut clean_zt[..], &mut fft_zt[..]);
-
-        //let mut fft_zout_temp = FFT::new(clean_zout.len(), false);
-        let mut fft_zout_temp_plan = FFTplanner::new(false);
-        let fft_zout_temp = fft_zout_temp_plan.plan_fft(clean_zout.len());
-        let mut fft_zout = clean_zout.clone();
-        fft_zout_temp.process(&mut clean_zout[..], &mut fft_zout[..]);
+        let mut fft_zout = self.detrend(clean_zout);
+        let mut fft_zout_temp_plan = FftPlanner::new();
+        let fft_zout_temp = fft_zout_temp_plan.plan_fft_forward(fft_zout.len());
+        fft_zout_temp.process(&mut fft_zout[..]);
 
         let mut freq: Vec<f64> = Vec::new();
         for i in 0..((n / 2) as usize) {

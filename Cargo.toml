@@ -5,10 +5,11 @@ authors = ["Prateesh Goyal <prateesh@mit.edu>"]
 edition = "2018"
 
 [dependencies]
+portus = "0.7"
+rand="0.8"
 anyhow = "1"
-num-complex="0.2"
-portus = "0.5"
-rand="0.5"
-rustfft="3"
+num-complex="0.4"
+rustfft="6"
 tracing="0.1"
+tracing-subscriber="0.3"
 structopt = "0.2"
