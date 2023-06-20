@@ -476,7 +476,9 @@ impl<T: Ipc> Flow for NimbusFlow<T> {
 
 impl<T: Ipc> NimbusFlow<T> {
     fn send_pattern(&self, mut rate: f64, _wait_time: Duration) {
-        if (Instant::now() - self.start_time.unwrap()) < Duration::from_secs(1) {
+        if self.start_time.is_none()
+            || (Instant::now() - self.start_time.unwrap()) < Duration::from_secs(1)
+        {
             rate = 2_000_000.0;
         }
 
@@ -922,7 +924,8 @@ impl<T: Ipc> NimbusFlow<T> {
 
         duration_of_fft = (n as f64) * t;
 
-        if self.start_time.unwrap().elapsed() < Duration::from_secs(10) {
+        if self.start_time.is_none() || self.start_time.unwrap().elapsed() < Duration::from_secs(10)
+        {
             return;
         }
 
